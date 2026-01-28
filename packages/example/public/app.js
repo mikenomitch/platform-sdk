@@ -4,9 +4,16 @@ let currentFile = null;
 let selectedTenant = null;
 let selectedWorker = null;
 let platformDefaults = null;
+let outboundWorkers = [];
+let tailWorkers = [];
+let cmEditor = null; // CodeMirror instance for main editor
+let cmNewOutbound = null; // CodeMirror for new outbound modal
+let cmNewTail = null; // CodeMirror for new tail modal
+let cmOutboundDetail = null; // CodeMirror for outbound detail modal
+let cmTailDetail = null; // CodeMirror for tail detail modal
 
 // DOM Elements
-const editor = document.getElementById('editor');
+const editorTextarea = document.getElementById('editor');
 const tabs = document.getElementById('tabs');
 const output = document.getElementById('output');
 const status = document.getElementById('status');
@@ -28,6 +35,15 @@ const addFileModal = document.getElementById('addFileModal');
 const addTenantModal = document.getElementById('addTenantModal');
 const addWorkerModal = document.getElementById('addWorkerModal');
 const tenantDetailModal = document.getElementById('tenantDetailModal');
+const addOutboundModal = document.getElementById('addOutboundModal');
+const addTailModal = document.getElementById('addTailModal');
+const outboundDetailModal = document.getElementById('outboundDetailModal');
+const tailDetailModal = document.getElementById('tailDetailModal');
+const platformDefaultsModal = document.getElementById('platformDefaultsModal');
+
+// Outbound/Tail lists
+const outboundList = document.getElementById('outboundList');
+const tailList = document.getElementById('tailList');
 
 // Examples
 const EXAMPLES = {
@@ -123,14 +139,121 @@ export default {
 }`,
     'package.json': JSON.stringify({ name: 'env-worker', main: 'src/index.ts' }, null, 2),
   },
+
+  // Subrequest example - makes outbound fetch calls
+  subrequest: {
+    'src/index.ts': `// Subrequest Example
+// Demonstrates making outbound fetch() calls from a Worker
+// If an outbound worker is attached, it will intercept these requests
+
+export default {
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    const target = url.searchParams.get('url') || 'https://httpbin.org/json';
+    
+    console.log('Making subrequest to:', target);
+    
+    try {
+      const start = Date.now();
+      const response = await fetch(target);
+      const elapsed = Date.now() - start;
+      
+      const body = await response.text();
+      
+      return new Response(JSON.stringify({
+        success: true,
+        target,
+        status: response.status,
+        elapsed: elapsed + 'ms',
+        headers: Object.fromEntries(response.headers),
+        body: body.slice(0, 1000) + (body.length > 1000 ? '...' : ''),
+      }, null, 2), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } catch (error) {
+      return new Response(JSON.stringify({
+        success: false,
+        target,
+        error: error instanceof Error ? error.message : String(error),
+      }, null, 2), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+  }
+}`,
+    'package.json': JSON.stringify({ name: 'subrequest-worker', main: 'src/index.ts' }, null, 2),
+  },
 };
+
+// Get CodeMirror mode based on filename
+function getModeForFile(filename) {
+  if (!filename) return 'javascript';
+  const ext = filename.split('.').pop().toLowerCase();
+  switch (ext) {
+    case 'ts':
+    case 'tsx':
+      return { name: 'javascript', typescript: true };
+    case 'js':
+    case 'jsx':
+    case 'mjs':
+      return 'javascript';
+    case 'json':
+      return { name: 'javascript', json: true };
+    case 'py':
+      return 'python';
+    case 'rs':
+      return 'rust';
+    case 'css':
+      return 'css';
+    case 'html':
+    case 'htm':
+      return 'htmlmixed';
+    case 'svg':
+    case 'xml':
+      return 'xml';
+    default:
+      return 'javascript';
+  }
+}
+
+// Initialize CodeMirror
+function initCodeMirror() {
+  const cmOptions = {
+    mode: { name: 'javascript', typescript: true },
+    theme: 'dracula',
+    lineNumbers: true,
+    tabSize: 2,
+    indentWithTabs: false,
+    lineWrapping: true,
+  };
+  
+  // Main editor
+  cmEditor = CodeMirror.fromTextArea(editorTextarea, { ...cmOptions, autofocus: true });
+  cmEditor.on('change', () => {
+    if (currentFile) {
+      files[currentFile] = cmEditor.getValue();
+    }
+  });
+  
+  // Outbound worker editors
+  cmNewOutbound = CodeMirror(document.getElementById('newOutboundCodeContainer'), cmOptions);
+  cmOutboundDetail = CodeMirror(document.getElementById('outboundDetailCodeContainer'), cmOptions);
+  
+  // Tail worker editors
+  cmNewTail = CodeMirror(document.getElementById('newTailCodeContainer'), cmOptions);
+  cmTailDetail = CodeMirror(document.getElementById('tailDetailCodeContainer'), cmOptions);
+}
 
 // Initialize
 async function init() {
+  initCodeMirror();
   loadExample('hello');
   await Promise.all([
     loadDefaults(),
     loadTenants(),
+    loadOutboundWorkers(),
+    loadTailWorkers(),
   ]);
   setupEventListeners();
 }
@@ -141,22 +264,6 @@ function setupEventListeners() {
     if (e.target.value) {
       loadExample(e.target.value);
       e.target.value = '';
-    }
-  });
-
-  // Editor
-  editor.addEventListener('input', () => {
-    if (currentFile) files[currentFile] = editor.value;
-  });
-
-  editor.addEventListener('keydown', (e) => {
-    if (e.key === 'Tab') {
-      e.preventDefault();
-      const start = editor.selectionStart;
-      const end = editor.selectionEnd;
-      editor.value = editor.value.substring(0, start) + '  ' + editor.value.substring(end);
-      editor.selectionStart = editor.selectionEnd = start + 2;
-      if (currentFile) files[currentFile] = editor.value;
     }
   });
 
@@ -202,6 +309,11 @@ function setupEventListeners() {
     if (!selectedTenant) return;
     addWorkerModal.classList.remove('hidden');
     document.getElementById('newWorkerId').value = '';
+    document.getElementById('newWorkerEnv').value = '';
+    document.getElementById('workerOutboundSelect').value = '';
+    // Clear tail worker selections
+    const tailSelect = document.getElementById('workerTailSelect');
+    Array.from(tailSelect.options).forEach(o => o.selected = false);
     document.getElementById('newWorkerId').focus();
   });
   document.getElementById('cancelAddWorker').addEventListener('click', () => addWorkerModal.classList.add('hidden'));
@@ -213,6 +325,12 @@ function setupEventListeners() {
   document.getElementById('saveTenantBtn').addEventListener('click', saveTenant);
   document.getElementById('deleteTenantBtn').addEventListener('click', deleteTenant);
 
+  // Platform defaults modal
+  document.getElementById('editDefaultsBtn').addEventListener('click', openPlatformDefaults);
+  document.getElementById('closePlatformDefaults').addEventListener('click', () => platformDefaultsModal.classList.add('hidden'));
+  document.getElementById('cancelPlatformDefaults').addEventListener('click', () => platformDefaultsModal.classList.add('hidden'));
+  document.getElementById('savePlatformDefaults').addEventListener('click', savePlatformDefaults);
+
   // Section toggles
   document.querySelectorAll('.section-header').forEach(header => {
     header.addEventListener('click', (e) => {
@@ -221,7 +339,94 @@ function setupEventListeners() {
       section.classList.toggle('collapsed');
     });
   });
+
+  // Outbound workers
+  document.getElementById('addOutboundBtn').addEventListener('click', () => {
+    addOutboundModal.classList.remove('hidden');
+    document.getElementById('newOutboundId').value = '';
+    document.getElementById('newOutboundName').value = '';
+    cmNewOutbound.setValue(DEFAULT_OUTBOUND_CODE);
+    setTimeout(() => cmNewOutbound.refresh(), 10);
+    document.getElementById('newOutboundId').focus();
+  });
+  document.getElementById('cancelAddOutbound').addEventListener('click', () => addOutboundModal.classList.add('hidden'));
+  document.getElementById('confirmAddOutbound').addEventListener('click', createOutboundWorker);
+  document.getElementById('createDefaultOutboundBtn').addEventListener('click', createDefaultOutbound);
+  
+  // Outbound detail modal
+  document.getElementById('closeOutboundDetail').addEventListener('click', () => outboundDetailModal.classList.add('hidden'));
+  document.getElementById('cancelOutboundEdit').addEventListener('click', () => outboundDetailModal.classList.add('hidden'));
+  document.getElementById('saveOutboundBtn').addEventListener('click', saveOutboundWorker);
+  document.getElementById('deleteOutboundBtn').addEventListener('click', deleteOutboundWorker);
+
+  // Tail workers
+  document.getElementById('addTailBtn').addEventListener('click', () => {
+    addTailModal.classList.remove('hidden');
+    document.getElementById('newTailId').value = '';
+    document.getElementById('newTailName').value = '';
+    cmNewTail.setValue(DEFAULT_TAIL_CODE);
+    setTimeout(() => cmNewTail.refresh(), 10);
+    document.getElementById('newTailId').focus();
+  });
+  document.getElementById('cancelAddTail').addEventListener('click', () => addTailModal.classList.add('hidden'));
+  document.getElementById('confirmAddTail').addEventListener('click', createTailWorker);
+  document.getElementById('createDefaultTailBtn').addEventListener('click', createDefaultTail);
+  
+  // Tail detail modal
+  document.getElementById('closeTailDetail').addEventListener('click', () => tailDetailModal.classList.add('hidden'));
+  document.getElementById('cancelTailEdit').addEventListener('click', () => tailDetailModal.classList.add('hidden'));
+  document.getElementById('saveTailBtn').addEventListener('click', saveTailWorker);
+  document.getElementById('deleteTailBtn').addEventListener('click', deleteTailWorker);
 }
+
+// Default code templates
+const DEFAULT_OUTBOUND_CODE = `import { WorkerEntrypoint } from 'cloudflare:workers';
+
+export class OutboundHandler extends WorkerEntrypoint {
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    
+    // Only allow requests to zombo.com
+    if (url.hostname === 'zombo.com' || url.hostname.endsWith('.zombo.com')) {
+      console.log('[Outbound] Allowed:', request.method, request.url);
+      return fetch(request);
+    }
+    
+    // Block everything else
+    console.log('[Outbound] Blocked:', request.method, request.url);
+    return new Response('no no - outbound requests are only allowed to zombo.com', { 
+      status: 403,
+      headers: { 'Content-Type': 'text/plain' }
+    });
+  }
+}
+
+export default {
+  fetch() {
+    return new Response('Outbound worker - use via binding');
+  }
+}`;
+
+const DEFAULT_TAIL_CODE = `export default {
+  async tail(events: TraceItem[]): Promise<void> {
+    for (const event of events) {
+      console.log('[TailWorker] Custom Log -', {
+        scriptName: event.scriptName,
+        outcome: event.outcome,
+        eventTimestamp: event.eventTimestamp,
+        logs: event.logs?.length ?? 0,
+        exceptions: event.exceptions?.length ?? 0,
+      });
+      
+      // Log any exceptions
+      if (event.exceptions?.length) {
+        for (const ex of event.exceptions) {
+          console.error('[TailWorker] Exception:', ex.name, ex.message);
+        }
+      }
+    }
+  }
+}`;
 
 // API calls
 async function loadDefaults() {
@@ -231,6 +436,51 @@ async function loadDefaults() {
     renderDefaults();
   } catch (err) {
     console.error('Failed to load defaults:', err);
+  }
+}
+
+function openPlatformDefaults() {
+  if (!platformDefaults) return;
+  
+  document.getElementById('defaultsEnvEditor').value = JSON.stringify(platformDefaults.env || {}, null, 2);
+  document.getElementById('defaultsCompatDate').value = platformDefaults.compatibilityDate || '';
+  document.getElementById('defaultsCompatFlags').value = (platformDefaults.compatibilityFlags || []).join(', ');
+  document.getElementById('defaultsCpuMs').value = platformDefaults.limits?.cpuMs || '';
+  document.getElementById('defaultsSubrequests').value = platformDefaults.limits?.subrequests || '';
+  
+  platformDefaultsModal.classList.remove('hidden');
+}
+
+async function savePlatformDefaults() {
+  let env = {};
+  const envText = document.getElementById('defaultsEnvEditor').value.trim();
+  if (envText) {
+    try {
+      env = JSON.parse(envText);
+    } catch {
+      alert('Invalid JSON for environment variables');
+      return;
+    }
+  }
+
+  const compatibilityDate = document.getElementById('defaultsCompatDate').value.trim() || undefined;
+  const flagsText = document.getElementById('defaultsCompatFlags').value.trim();
+  const compatibilityFlags = flagsText ? flagsText.split(',').map(f => f.trim()).filter(Boolean) : undefined;
+  
+  const cpuMs = parseInt(document.getElementById('defaultsCpuMs').value) || undefined;
+  const subrequests = parseInt(document.getElementById('defaultsSubrequests').value) || undefined;
+  const limits = (cpuMs || subrequests) ? { cpuMs, subrequests } : undefined;
+
+  try {
+    await fetch('/api/defaults', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ env, compatibilityDate, compatibilityFlags, limits }),
+    });
+    platformDefaultsModal.classList.add('hidden');
+    await loadDefaults();
+  } catch (err) {
+    alert('Failed to save platform defaults: ' + err.message);
   }
 }
 
@@ -253,6 +503,32 @@ async function loadWorkers(tenantId) {
   } catch (err) {
     console.error('Failed to load workers:', err);
     workerList.innerHTML = '<div class="error-state">Failed to load</div>';
+  }
+}
+
+async function loadOutboundWorkers() {
+  try {
+    const res = await fetch('/api/outbound-workers');
+    const data = await res.json();
+    outboundWorkers = data.workers || [];
+    renderOutboundWorkers();
+    updateOutboundSelects();
+  } catch (err) {
+    console.error('Failed to load outbound workers:', err);
+    outboundList.innerHTML = '<div class="error-state">Failed to load</div>';
+  }
+}
+
+async function loadTailWorkers() {
+  try {
+    const res = await fetch('/api/tail-workers');
+    const data = await res.json();
+    tailWorkers = data.workers || [];
+    renderTailWorkers();
+    updateTailSelects();
+  } catch (err) {
+    console.error('Failed to load tail workers:', err);
+    tailList.innerHTML = '<div class="error-state">Failed to load</div>';
   }
 }
 
@@ -303,11 +579,22 @@ async function saveTenant() {
   const flagsText = document.getElementById('tenantCompatFlags').value.trim();
   const compatibilityFlags = flagsText ? flagsText.split(',').map(f => f.trim()).filter(Boolean) : undefined;
 
+  // Get outbound/tail worker associations
+  const outboundWorkerId = document.getElementById('tenantOutboundWorker').value || undefined;
+  const tailSelect = document.getElementById('tenantTailWorkers');
+  const tailWorkerIds = Array.from(tailSelect.selectedOptions).map(o => o.value).filter(Boolean);
+
   try {
     await fetch(`/api/tenants/${tenantId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ env, compatibilityDate, compatibilityFlags }),
+      body: JSON.stringify({ 
+        env, 
+        compatibilityDate, 
+        compatibilityFlags,
+        outboundWorkerId,
+        tailWorkerIds: tailWorkerIds.length > 0 ? tailWorkerIds : undefined,
+      }),
     });
     tenantDetailModal.classList.add('hidden');
     await loadTenants();
@@ -340,11 +627,34 @@ async function createWorker() {
   const id = document.getElementById('newWorkerId').value.trim();
   if (!id) return;
 
+  // Parse env variables
+  let env = {};
+  const envText = document.getElementById('newWorkerEnv').value.trim();
+  if (envText) {
+    try {
+      env = JSON.parse(envText);
+    } catch {
+      alert('Invalid JSON for environment variables');
+      return;
+    }
+  }
+
+  // Get outbound/tail selections
+  const outboundWorkerId = document.getElementById('workerOutboundSelect').value || undefined;
+  const tailSelect = document.getElementById('workerTailSelect');
+  const tailWorkerIds = Array.from(tailSelect.selectedOptions).map(o => o.value).filter(Boolean);
+
   try {
     await fetch(`/api/tenants/${selectedTenant}/workers`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, files }),
+      body: JSON.stringify({ 
+        id, 
+        files,
+        env: Object.keys(env).length > 0 ? env : undefined,
+        outboundWorkerId,
+        tailWorkerIds: tailWorkerIds.length > 0 ? tailWorkerIds : undefined,
+      }),
     });
     addWorkerModal.classList.add('hidden');
     await loadWorkers(selectedTenant);
@@ -384,6 +694,172 @@ async function deleteWorker(tenantId, workerId) {
     await loadWorkers(tenantId);
   } catch (err) {
     alert('Failed to delete worker: ' + err.message);
+  }
+}
+
+// Outbound worker CRUD
+async function createOutboundWorker() {
+  const id = document.getElementById('newOutboundId').value.trim();
+  const name = document.getElementById('newOutboundName').value.trim();
+  const code = cmNewOutbound.getValue();
+  
+  if (!id || !name) {
+    alert('Please fill in ID and Name');
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/outbound-workers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id,
+        name,
+        files: {
+          'src/index.ts': code,
+          'package.json': JSON.stringify({ name: id, main: 'src/index.ts' }, null, 2),
+        },
+      }),
+    });
+    
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Failed to create');
+    }
+    
+    addOutboundModal.classList.add('hidden');
+    await loadOutboundWorkers();
+  } catch (err) {
+    alert('Failed to create outbound worker: ' + err.message);
+  }
+}
+
+async function createDefaultOutbound() {
+  try {
+    await fetch('/api/outbound-workers/create-default', { method: 'POST' });
+    await loadOutboundWorkers();
+  } catch (err) {
+    alert('Failed to create default outbound: ' + err.message);
+  }
+}
+
+async function saveOutboundWorker() {
+  const id = document.getElementById('outboundDetailId').textContent;
+  const name = document.getElementById('outboundDetailName').value.trim();
+  const code = cmOutboundDetail.getValue();
+
+  try {
+    await fetch(`/api/outbound-workers/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name,
+        files: {
+          'src/index.ts': code,
+          'package.json': JSON.stringify({ name: id, main: 'src/index.ts' }, null, 2),
+        },
+      }),
+    });
+    outboundDetailModal.classList.add('hidden');
+    await loadOutboundWorkers();
+  } catch (err) {
+    alert('Failed to save outbound worker: ' + err.message);
+  }
+}
+
+async function deleteOutboundWorker() {
+  const id = document.getElementById('outboundDetailId').textContent;
+  if (!confirm(`Delete outbound worker "${id}"?`)) return;
+
+  try {
+    await fetch(`/api/outbound-workers/${id}`, { method: 'DELETE' });
+    outboundDetailModal.classList.add('hidden');
+    await loadOutboundWorkers();
+  } catch (err) {
+    alert('Failed to delete outbound worker: ' + err.message);
+  }
+}
+
+// Tail worker CRUD
+async function createTailWorker() {
+  const id = document.getElementById('newTailId').value.trim();
+  const name = document.getElementById('newTailName').value.trim();
+  const code = cmNewTail.getValue();
+  
+  if (!id || !name) {
+    alert('Please fill in ID and Name');
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/tail-workers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id,
+        name,
+        files: {
+          'src/index.ts': code,
+          'package.json': JSON.stringify({ name: id, main: 'src/index.ts' }, null, 2),
+        },
+      }),
+    });
+    
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Failed to create');
+    }
+    
+    addTailModal.classList.add('hidden');
+    await loadTailWorkers();
+  } catch (err) {
+    alert('Failed to create tail worker: ' + err.message);
+  }
+}
+
+async function createDefaultTail() {
+  try {
+    await fetch('/api/tail-workers/create-default', { method: 'POST' });
+    await loadTailWorkers();
+  } catch (err) {
+    alert('Failed to create default tail: ' + err.message);
+  }
+}
+
+async function saveTailWorker() {
+  const id = document.getElementById('tailDetailId').textContent;
+  const name = document.getElementById('tailDetailName').value.trim();
+  const code = cmTailDetail.getValue();
+
+  try {
+    await fetch(`/api/tail-workers/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name,
+        files: {
+          'src/index.ts': code,
+          'package.json': JSON.stringify({ name: id, main: 'src/index.ts' }, null, 2),
+        },
+      }),
+    });
+    tailDetailModal.classList.add('hidden');
+    await loadTailWorkers();
+  } catch (err) {
+    alert('Failed to save tail worker: ' + err.message);
+  }
+}
+
+async function deleteTailWorker() {
+  const id = document.getElementById('tailDetailId').textContent;
+  if (!confirm(`Delete tail worker "${id}"?`)) return;
+
+  try {
+    await fetch(`/api/tail-workers/${id}`, { method: 'DELETE' });
+    tailDetailModal.classList.add('hidden');
+    await loadTailWorkers();
+  } catch (err) {
+    alert('Failed to delete tail worker: ' + err.message);
   }
 }
 
@@ -492,6 +968,157 @@ function renderWorkers(workers) {
   });
 }
 
+function renderOutboundWorkers() {
+  if (outboundWorkers.length === 0) {
+    outboundList.innerHTML = '<div class="empty-state">No outbound workers</div>';
+    return;
+  }
+
+  outboundList.innerHTML = outboundWorkers.map(w => `
+    <div class="list-item" data-outbound="${w.id}">
+      <div class="list-item-content">
+        <span class="list-item-name">${escapeHtml(w.name || w.id)}</span>
+        <span class="list-item-meta">${formatDate(w.updatedAt)}</span>
+      </div>
+      <div class="list-item-actions">
+        <button class="btn-icon-sm" data-action="edit" title="Edit">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  `).join('');
+
+  // Event listeners
+  outboundList.querySelectorAll('.list-item').forEach(item => {
+    item.addEventListener('click', (e) => {
+      if (e.target.closest('[data-action="edit"]')) {
+        openOutboundDetail(item.dataset.outbound);
+      }
+    });
+  });
+}
+
+function renderTailWorkers() {
+  if (tailWorkers.length === 0) {
+    tailList.innerHTML = '<div class="empty-state">No tail workers</div>';
+    return;
+  }
+
+  tailList.innerHTML = tailWorkers.map(w => `
+    <div class="list-item" data-tail="${w.id}">
+      <div class="list-item-content">
+        <span class="list-item-name">${escapeHtml(w.name || w.id)}</span>
+        <span class="list-item-meta">${formatDate(w.updatedAt)}</span>
+      </div>
+      <div class="list-item-actions">
+        <button class="btn-icon-sm" data-action="edit" title="Edit">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  `).join('');
+
+  // Event listeners
+  tailList.querySelectorAll('.list-item').forEach(item => {
+    item.addEventListener('click', (e) => {
+      if (e.target.closest('[data-action="edit"]')) {
+        openTailDetail(item.dataset.tail);
+      }
+    });
+  });
+}
+
+// Update outbound worker selects in modals
+function updateOutboundSelects() {
+  const selects = [
+    document.getElementById('tenantOutboundWorker'),
+    document.getElementById('workerOutboundSelect'),
+  ];
+  
+  selects.forEach(select => {
+    if (!select) return;
+    const currentValue = select.value;
+    // Keep first option (None)
+    const firstOption = select.options[0];
+    select.innerHTML = '';
+    select.appendChild(firstOption);
+    
+    outboundWorkers.forEach(w => {
+      const option = document.createElement('option');
+      option.value = w.id;
+      option.textContent = w.name || w.id;
+      select.appendChild(option);
+    });
+    
+    // Restore selection if still valid
+    if (currentValue && outboundWorkers.some(w => w.id === currentValue)) {
+      select.value = currentValue;
+    }
+  });
+}
+
+// Update tail worker selects in modals
+function updateTailSelects() {
+  const selects = [
+    document.getElementById('tenantTailWorkers'),
+    document.getElementById('workerTailSelect'),
+  ];
+  
+  selects.forEach(select => {
+    if (!select) return;
+    const selectedValues = Array.from(select.selectedOptions).map(o => o.value);
+    select.innerHTML = '';
+    
+    tailWorkers.forEach(w => {
+      const option = document.createElement('option');
+      option.value = w.id;
+      option.textContent = w.name || w.id;
+      if (selectedValues.includes(w.id)) {
+        option.selected = true;
+      }
+      select.appendChild(option);
+    });
+  });
+}
+
+async function openOutboundDetail(id) {
+  try {
+    const res = await fetch(`/api/outbound-workers/${id}`);
+    const data = await res.json();
+    
+    document.getElementById('outboundDetailId').textContent = id;
+    document.getElementById('outboundDetailName').value = data.name || '';
+    cmOutboundDetail.setValue(data.files?.['src/index.ts'] || '');
+    
+    outboundDetailModal.classList.remove('hidden');
+    setTimeout(() => cmOutboundDetail.refresh(), 10);
+  } catch (err) {
+    alert('Failed to load outbound worker: ' + err.message);
+  }
+}
+
+async function openTailDetail(id) {
+  try {
+    const res = await fetch(`/api/tail-workers/${id}`);
+    const data = await res.json();
+    
+    document.getElementById('tailDetailId').textContent = id;
+    document.getElementById('tailDetailName').value = data.name || '';
+    cmTailDetail.setValue(data.files?.['src/index.ts'] || '');
+    
+    tailDetailModal.classList.remove('hidden');
+    setTimeout(() => cmTailDetail.refresh(), 10);
+  } catch (err) {
+    alert('Failed to load tail worker: ' + err.message);
+  }
+}
+
 async function openTenantDetail(tenantId) {
   try {
     const res = await fetch(`/api/tenants/${tenantId}`);
@@ -501,6 +1128,17 @@ async function openTenantDetail(tenantId) {
     document.getElementById('tenantEnvEditor').value = JSON.stringify(data.config?.env || {}, null, 2);
     document.getElementById('tenantCompatDate').value = data.config?.compatibilityDate || '';
     document.getElementById('tenantCompatFlags').value = (data.config?.compatibilityFlags || []).join(', ');
+    
+    // Set outbound worker selection
+    const outboundSelect = document.getElementById('tenantOutboundWorker');
+    outboundSelect.value = data.associations?.outboundWorkerId || '';
+    
+    // Set tail worker selections
+    const tailSelect = document.getElementById('tenantTailWorkers');
+    const selectedTails = data.associations?.tailWorkerIds || [];
+    Array.from(tailSelect.options).forEach(option => {
+      option.selected = selectedTails.includes(option.value);
+    });
     
     tenantDetailModal.classList.remove('hidden');
   } catch (err) {
@@ -597,7 +1235,11 @@ function renderTabs() {
 
 function selectFile(name) {
   currentFile = name;
-  editor.value = files[name] || '';
+  if (cmEditor) {
+    cmEditor.setValue(files[name] || '');
+    cmEditor.setOption('mode', getModeForFile(name));
+    cmEditor.refresh();
+  }
   renderTabs();
 }
 

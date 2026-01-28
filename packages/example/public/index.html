@@ -5,6 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Platforms SDK Playground</title>
   <link rel="stylesheet" href="/styles.css">
+  <!-- CodeMirror for syntax highlighting -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/dracula.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/rust/rust.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/css/css.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/xml/xml.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/htmlmixed/htmlmixed.min.js"></script>
 </head>
 <body>
   <div class="layout">
@@ -29,9 +39,17 @@
         <section class="sidebar-section">
           <div class="section-header" data-toggle="defaults">
             <span>Platform Defaults</span>
-            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="6 9 12 15 18 9"/>
-            </svg>
+            <div class="section-actions">
+              <button class="btn-sm" id="editDefaultsBtn" title="Edit defaults">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                </svg>
+              </button>
+              <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </div>
           </div>
           <div class="section-body" id="defaultsSection">
             <div class="defaults-grid" id="defaultsGrid">
@@ -75,10 +93,48 @@
             </div>
           </div>
         </section>
+
+        <!-- Outbound Workers -->
+        <section class="sidebar-section collapsed">
+          <div class="section-header" data-toggle="outbound">
+            <span>Outbound Workers</span>
+            <div class="section-actions">
+              <button class="btn-sm" id="addOutboundBtn" title="Add outbound worker">+</button>
+              <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </div>
+          </div>
+          <div class="section-body">
+            <div class="outbound-list" id="outboundList">
+              <div class="loading">Loading...</div>
+            </div>
+            <button class="btn-text" id="createDefaultOutboundBtn">Create Default Outbound</button>
+          </div>
+        </section>
+
+        <!-- Tail Workers -->
+        <section class="sidebar-section collapsed">
+          <div class="section-header" data-toggle="tail">
+            <span>Tail Workers</span>
+            <div class="section-actions">
+              <button class="btn-sm" id="addTailBtn" title="Add tail worker">+</button>
+              <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </div>
+          </div>
+          <div class="section-body">
+            <div class="tail-list" id="tailList">
+              <div class="loading">Loading...</div>
+            </div>
+            <button class="btn-text" id="createDefaultTailBtn">Create Default (Custom Logger)</button>
+          </div>
+        </section>
       </div>
 
       <div class="sidebar-footer">
-        <a href="https://github.com/cloudflare/workers-platforms-sdk" target="_blank" class="footer-link">
+        <a href="https://github.com/mikenomitch/platform-sdk" target="_blank" class="footer-link">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
             <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
           </svg>
@@ -97,6 +153,7 @@
             <option value="api">JSON API</option>
             <option value="router">Router</option>
             <option value="env">Environment</option>
+            <option value="subrequest">Subrequest (fetch)</option>
           </select>
           <span class="context-info" id="contextInfo"></span>
         </div>
@@ -115,7 +172,7 @@
             <div class="tabs" id="tabs"></div>
             <button class="btn-icon" id="addFile" title="Add file">+</button>
           </div>
-          <div class="editor-container">
+          <div class="editor-container" id="editorContainer">
             <textarea id="editor" spellcheck="false" placeholder="Select a file..."></textarea>
           </div>
           <div class="panel-footer">
@@ -197,14 +254,37 @@
     </div>
   </div>
 
-  <div class="modal-overlay hidden" id="addWorkerModal">
-    <div class="modal">
-      <h2>Create Worker</h2>
-      <label class="input-label">Worker ID</label>
-      <input type="text" id="newWorkerId" placeholder="api-handler">
+  <div class="modal-overlay hidden" id="platformDefaultsModal">
+    <div class="modal modal-wide">
+      <div class="modal-header">
+        <h2>Platform Defaults</h2>
+        <button class="btn-icon" id="closePlatformDefaults">&times;</button>
+      </div>
+      <div class="detail-content">
+        <div class="detail-section">
+          <label class="input-label">Environment Variables (JSON)</label>
+          <textarea id="defaultsEnvEditor" placeholder='{"API_KEY": "secret"}'></textarea>
+        </div>
+        <div class="detail-section">
+          <label class="input-label">Compatibility Date</label>
+          <input type="text" id="defaultsCompatDate" placeholder="2026-01-24">
+        </div>
+        <div class="detail-section">
+          <label class="input-label">Compatibility Flags (comma-separated)</label>
+          <input type="text" id="defaultsCompatFlags" placeholder="nodejs_compat">
+        </div>
+        <div class="detail-section">
+          <label class="input-label">CPU Limit (ms)</label>
+          <input type="number" id="defaultsCpuMs" placeholder="50">
+        </div>
+        <div class="detail-section">
+          <label class="input-label">Subrequests Limit</label>
+          <input type="number" id="defaultsSubrequests" placeholder="50">
+        </div>
+      </div>
       <div class="modal-actions">
-        <button class="btn secondary" id="cancelAddWorker">Cancel</button>
-        <button class="btn primary" id="confirmAddWorker">Create</button>
+        <button class="btn secondary" id="cancelPlatformDefaults">Cancel</button>
+        <button class="btn primary" id="savePlatformDefaults">Save</button>
       </div>
     </div>
   </div>
@@ -228,12 +308,128 @@
           <label class="input-label">Compatibility Flags (comma-separated)</label>
           <input type="text" id="tenantCompatFlags" placeholder="nodejs_compat">
         </div>
+        <div class="detail-section">
+          <label class="input-label">Outbound Worker</label>
+          <select id="tenantOutboundWorker" class="select full-width">
+            <option value="">None</option>
+          </select>
+        </div>
+        <div class="detail-section">
+          <label class="input-label">Tail Workers</label>
+          <select id="tenantTailWorkers" class="select full-width" multiple size="3">
+          </select>
+          <span class="input-hint">Hold Ctrl/Cmd to select multiple</span>
+        </div>
       </div>
       <div class="modal-actions">
         <button class="btn danger" id="deleteTenantBtn">Delete</button>
         <div style="flex:1"></div>
         <button class="btn secondary" id="cancelTenantEdit">Cancel</button>
         <button class="btn primary" id="saveTenantBtn">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay hidden" id="addWorkerModal">
+    <div class="modal modal-wide">
+      <h2>Create Worker</h2>
+      <label class="input-label">Worker ID</label>
+      <input type="text" id="newWorkerId" placeholder="api-handler">
+      <label class="input-label">Environment Variables (JSON, merged with tenant/platform defaults)</label>
+      <textarea id="newWorkerEnv" placeholder='{"MY_VAR": "value"}'></textarea>
+      <label class="input-label">Outbound Worker</label>
+      <select id="workerOutboundSelect" class="select full-width">
+        <option value="">None (inherit from tenant)</option>
+      </select>
+      <label class="input-label">Tail Workers</label>
+      <select id="workerTailSelect" class="select full-width" multiple size="3">
+      </select>
+      <span class="input-hint">Hold Ctrl/Cmd to select multiple</span>
+      <div class="modal-actions">
+        <button class="btn secondary" id="cancelAddWorker">Cancel</button>
+        <button class="btn primary" id="confirmAddWorker">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay hidden" id="addOutboundModal">
+    <div class="modal modal-large">
+      <h2>Create Outbound Worker</h2>
+      <label class="input-label">ID</label>
+      <input type="text" id="newOutboundId" placeholder="my-outbound">
+      <label class="input-label">Name</label>
+      <input type="text" id="newOutboundName" placeholder="My Outbound Worker">
+      <label class="input-label">Code (src/index.ts)</label>
+      <div class="code-editor-container" id="newOutboundCodeContainer"></div>
+      <div class="modal-actions">
+        <button class="btn secondary" id="cancelAddOutbound">Cancel</button>
+        <button class="btn primary" id="confirmAddOutbound">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay hidden" id="addTailModal">
+    <div class="modal modal-large">
+      <h2>Create Tail Worker</h2>
+      <label class="input-label">ID</label>
+      <input type="text" id="newTailId" placeholder="my-tail">
+      <label class="input-label">Name</label>
+      <input type="text" id="newTailName" placeholder="My Tail Worker">
+      <label class="input-label">Code (src/index.ts)</label>
+      <div class="code-editor-container" id="newTailCodeContainer"></div>
+      <div class="modal-actions">
+        <button class="btn secondary" id="cancelAddTail">Cancel</button>
+        <button class="btn primary" id="confirmAddTail">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay hidden" id="outboundDetailModal">
+    <div class="modal modal-large">
+      <div class="modal-header">
+        <h2>Outbound: <span id="outboundDetailId"></span></h2>
+        <button class="btn-icon" id="closeOutboundDetail">&times;</button>
+      </div>
+      <div class="detail-content">
+        <div class="detail-section">
+          <label class="input-label">Name</label>
+          <input type="text" id="outboundDetailName">
+        </div>
+        <div class="detail-section">
+          <label class="input-label">Code (src/index.ts)</label>
+          <div class="code-editor-container" id="outboundDetailCodeContainer"></div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn danger" id="deleteOutboundBtn">Delete</button>
+        <div style="flex:1"></div>
+        <button class="btn secondary" id="cancelOutboundEdit">Cancel</button>
+        <button class="btn primary" id="saveOutboundBtn">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay hidden" id="tailDetailModal">
+    <div class="modal modal-large">
+      <div class="modal-header">
+        <h2>Tail: <span id="tailDetailId"></span></h2>
+        <button class="btn-icon" id="closeTailDetail">&times;</button>
+      </div>
+      <div class="detail-content">
+        <div class="detail-section">
+          <label class="input-label">Name</label>
+          <input type="text" id="tailDetailName">
+        </div>
+        <div class="detail-section">
+          <label class="input-label">Code (src/index.ts)</label>
+          <div class="code-editor-container" id="tailDetailCodeContainer"></div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn danger" id="deleteTailBtn">Delete</button>
+        <div style="flex:1"></div>
+        <button class="btn secondary" id="cancelTailEdit">Cancel</button>
+        <button class="btn primary" id="saveTailBtn">Save</button>
       </div>
     </div>
   </div>

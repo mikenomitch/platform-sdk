@@ -17,11 +17,11 @@
   "kv_namespaces": [
     {
       "binding": "TENANTS",
-      "id": "tenants-placeholder"
+      "id": "9721c80bd8b54ac19c3fb77d68b785f4"
     },
     {
       "binding": "WORKERS", 
-      "id": "workers-placeholder"
+      "id": "1f196ca61e62413aab2fec1e37bc427f"
     }
   ],
   "observability": {

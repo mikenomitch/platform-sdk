@@ -421,6 +421,7 @@ body {
   flex: 1;
   display: flex;
   min-height: 0;
+  overflow: hidden;
 }
 
 #editor {
@@ -436,6 +437,37 @@ body {
   resize: none;
   outline: none;
   tab-size: 2;
+}
+
+/* CodeMirror customization */
+.editor-container .CodeMirror {
+  width: 100%;
+  height: 100%;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  line-height: 1.6;
+  background: var(--bg);
+}
+
+.editor-container .CodeMirror-gutters {
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+}
+
+.editor-container .CodeMirror-linenumber {
+  color: var(--text-muted);
+}
+
+.editor-container .CodeMirror-cursor {
+  border-left-color: var(--accent);
+}
+
+.editor-container .CodeMirror-selected {
+  background: rgba(249, 115, 22, 0.2);
+}
+
+.editor-container .CodeMirror-focused .CodeMirror-selected {
+  background: rgba(249, 115, 22, 0.3);
 }
 
 /* Output */
@@ -770,4 +802,114 @@ body {
 
 .hidden {
   display: none !important;
+}
+
+/* Full width select */
+.select.full-width {
+  width: 100%;
+}
+
+/* Code editor textarea */
+.code-editor {
+  min-height: 400px;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  tab-size: 2;
+}
+
+/* Large modal for code editing */
+.modal-large {
+  min-width: 900px;
+  max-width: 1100px;
+}
+
+/* Code editor container in modals */
+.code-editor-container {
+  height: 500px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.code-editor-container .CodeMirror {
+  height: 100%;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  line-height: 1.6;
+  background: var(--bg);
+}
+
+.code-editor-container .CodeMirror-gutters {
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+}
+
+.code-editor-container .CodeMirror-linenumber {
+  color: var(--text-muted);
+}
+
+.code-editor-container .CodeMirror-cursor {
+  border-left-color: var(--accent);
+}
+
+.code-editor-container .CodeMirror-selected {
+  background: rgba(249, 115, 22, 0.2);
+}
+
+.code-editor-container .CodeMirror-focused .CodeMirror-selected {
+  background: rgba(249, 115, 22, 0.3);
+}
+
+/* Text button */
+.btn-text {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 6px 0;
+  width: 100%;
+  text-align: left;
+}
+
+.btn-text:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
+
+/* Input hint */
+.input-hint {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+/* Detail content */
+.detail-content {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+/* Badge variants */
+.badge-outline {
+  display: inline-block;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: 4px;
+  font-size: 0.65rem;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.badge-outline.outbound {
+  border-color: #3b82f6;
+  color: #3b82f6;
+}
+
+.badge-outline.tail {
+  border-color: #8b5cf6;
+  color: #8b5cf6;
 }
