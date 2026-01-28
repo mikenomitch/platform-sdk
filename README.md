@@ -94,6 +94,33 @@ Three layers, unwrap when needed:
 
 ## API
 
+### Platform Defaults
+
+Set global defaults that apply to all workers. Config inheritance: **platform defaults → tenant config → worker config**.
+
+```ts
+const platform = Platform.create({
+  loader: env.LOADER,
+  tenantsKV: env.TENANTS,
+  workersKV: env.WORKERS,
+  defaults: {
+    env: { ENVIRONMENT: 'production' },
+    compatibilityDate: '2024-12-01',
+    compatibilityFlags: ['nodejs_compat'],
+    limits: { cpuMs: 50, subrequests: 50 },
+  },
+});
+
+// Get current defaults
+const defaults = platform.getDefaults();
+
+// Update defaults (merges with existing, invalidates all cached stubs)
+platform.updateDefaults({
+  env: { NEW_VAR: 'value' },
+  limits: { cpuMs: 100 },
+});
+```
+
 ### Tenants
 
 ```ts
@@ -146,12 +173,58 @@ await platform.deleteWorker('acme', 'main');
 await platform.listWorkers('acme');
 ```
 
+### Routing
+
+Three ways to route requests to tenant workers:
+
+```ts
+// 1. Direct: route by tenant + worker name
+const response = await platform.fetch('acme', 'main', request);
+
+// 2. Dynamic: list workers and pick one
+const { workers } = await platform.listWorkers('acme');
+const worker = workers.find(w => w.id.startsWith('api-'));
+if (worker) {
+  const response = await platform.fetch('acme', worker.id, request);
+}
+
+// 3. Hostname-based: associate hostnames with workers, then route automatically
+await platform.addHostnames('acme', 'main', ['app.acme.com', 'www.acme.com']);
+
+// Route by hostname (returns null if no match)
+const response = await platform.route(request);
+if (!response) {
+  return new Response('Not found', { status: 404 });
+}
+```
+
+Hostname management:
+
+```ts
+// Add hostnames to a worker
+await platform.addHostnames('acme', 'main', ['app.acme.com']);
+
+// Or set hostnames when creating the worker
+await platform.createWorker('acme', {
+  id: 'main',
+  files: { ... },
+  hostnames: ['app.acme.com', 'www.acme.com'],
+});
+
+// Remove hostnames
+await platform.removeHostnames('acme', 'main', ['www.acme.com']);
+
+// List hostnames for a worker
+const hostnames = await platform.getHostnames('acme', 'main');
+
+// Resolve a hostname to tenant/worker
+const route = await platform.resolveHostname('app.acme.com');
+// { hostname: 'app.acme.com', tenantId: 'acme', workerId: 'main' }
+```
+
 ### Execution
 
 ```ts
-// Execute a worker
-const response = await platform.fetch('acme', 'main', request);
-
 // Run ephemeral code with tenant defaults (not persisted)
 const response = await platform.runEphemeral('acme', files, request);
 ```

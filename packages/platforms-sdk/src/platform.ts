@@ -98,7 +98,7 @@ export class Platform {
   public readonly hostnames: HostnameStorage;
   public readonly loader: WorkerLoader;
 
-  private readonly defaults: WorkerDefaults;
+  private _defaults: WorkerDefaults;
   private readonly outbound?: Fetcher;
   private readonly stubCache = new Map<string, { version: number; stub: WorkerStub }>();
 
@@ -133,7 +133,7 @@ export class Platform {
     }
 
     // Global defaults (fallback values)
-    this.defaults = {
+    this._defaults = {
       env: options.defaults?.env ?? {},
       compatibilityDate: options.defaults?.compatibilityDate ?? '2024-12-01',
       compatibilityFlags: options.defaults?.compatibilityFlags ?? [],
@@ -153,6 +153,45 @@ export class Platform {
       tenantsKV: env.TENANTS,
       workersKV: env.WORKERS,
     });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Platform Defaults
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Get current platform defaults
+   */
+  getDefaults(): WorkerDefaults {
+    return { ...this._defaults };
+  }
+
+  /**
+   * Update platform defaults
+   * 
+   * Updates are merged with existing defaults. Invalidates all cached worker stubs.
+   * 
+   * @example
+   * ```ts
+   * platform.updateDefaults({
+   *   env: { NEW_VAR: 'value' },
+   *   limits: { cpuMs: 100 },
+   * });
+   * ```
+   */
+  updateDefaults(updates: Partial<WorkerDefaults>): void {
+    this._defaults = {
+      env: { ...this._defaults.env, ...updates.env },
+      compatibilityDate: updates.compatibilityDate ?? this._defaults.compatibilityDate,
+      compatibilityFlags: updates.compatibilityFlags ?? this._defaults.compatibilityFlags,
+      limits: updates.limits !== undefined
+        ? { ...this._defaults.limits, ...updates.limits }
+        : this._defaults.limits,
+      tails: updates.tails ?? this._defaults.tails,
+    };
+
+    // Invalidate all cached stubs since defaults changed
+    this.stubCache.clear();
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -420,7 +459,7 @@ export class Platform {
   } {
     // Env: merge all three levels (global → tenant → worker)
     const env = {
-      ...this.defaults.env,
+      ...this._defaults.env,
       ...tenant.config.env,
       ...worker.config.env,
     };
@@ -429,13 +468,13 @@ export class Platform {
     const compatibilityDate =
       worker.config.compatibilityDate ??
       tenant.config.compatibilityDate ??
-      this.defaults.compatibilityDate ??
+      this._defaults.compatibilityDate ??
       '2024-12-01';
 
     // Compat flags: concatenate all (dedupe)
     const compatibilityFlags = [
       ...new Set([
-        ...(this.defaults.compatibilityFlags ?? []),
+        ...(this._defaults.compatibilityFlags ?? []),
         ...(tenant.config.compatibilityFlags ?? []),
         ...(worker.config.compatibilityFlags ?? []),
       ]),
@@ -443,9 +482,9 @@ export class Platform {
 
     // Limits: merge all three levels (global → tenant → worker)
     const limits: WorkerLimits | undefined =
-      this.defaults.limits || tenant.config.limits || worker.config.limits
+      this._defaults.limits || tenant.config.limits || worker.config.limits
         ? {
-            ...this.defaults.limits,
+            ...this._defaults.limits,
             ...tenant.config.limits,
             ...worker.config.limits,
           }
@@ -453,7 +492,7 @@ export class Platform {
 
     // Tails: concatenate all levels (all tail workers receive events)
     const tails: TailWorker[] = [
-      ...(this.defaults.tails ?? []),
+      ...(this._defaults.tails ?? []),
       ...(tenant.config.tails ?? []),
       ...(worker.config.tails ?? []),
     ];
@@ -569,27 +608,27 @@ export class Platform {
 
     // Merge: global → tenant → options
     const env = {
-      ...this.defaults.env,
+      ...this._defaults.env,
       ...tenant.config.env,
       ...options?.env,
     };
 
     const compatibilityDate =
       tenant.config.compatibilityDate ??
-      this.defaults.compatibilityDate ??
+      this._defaults.compatibilityDate ??
       '2024-12-01';
 
     const compatibilityFlags = [
       ...new Set([
-        ...(this.defaults.compatibilityFlags ?? []),
+        ...(this._defaults.compatibilityFlags ?? []),
         ...(tenant.config.compatibilityFlags ?? []),
       ]),
     ];
 
     const limits: WorkerLimits | undefined =
-      this.defaults.limits || tenant.config.limits || options?.limits
+      this._defaults.limits || tenant.config.limits || options?.limits
         ? {
-            ...this.defaults.limits,
+            ...this._defaults.limits,
             ...tenant.config.limits,
             ...options?.limits,
           }
@@ -597,7 +636,7 @@ export class Platform {
 
     // Tails: concatenate global + tenant (ephemeral workers don't have their own tails)
     const tails: TailWorker[] = [
-      ...(this.defaults.tails ?? []),
+      ...(this._defaults.tails ?? []),
       ...(tenant.config.tails ?? []),
     ];
 
