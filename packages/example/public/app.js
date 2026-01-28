@@ -1,7 +1,7 @@
 // Description constants (used in sidebar tooltips and welcome cards)
 const DESCRIPTIONS = {
   tenants: 'Tenants represent your customers. Each tenant can have their own Workers with isolated configuration, environment variables, and resource limits.',
-  templates: 'Templates are reusable Worker blueprints with customizable slots. Create templates to let tenants deploy Workers with their own configuration without writing code.',
+  templates: 'Templates are reusable Worker blueprints with customizable slots. Create templates to let tenants deploy Workers with their own configuration without entire Worker code.',
   outbound: 'Outbound Workers intercept all fetch() requests made by tenant Workers. Use them to enforce security policies, add logging, or route requests through proxies.',
   tail: 'Tail Workers receive logs and traces from tenant Workers after execution. Use them for custom logging, analytics, error tracking, or compliance auditing.',
 };
@@ -124,7 +124,7 @@ import { handleHealth } from './routes/health';
 export default {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    
+
     switch (url.pathname) {
       case '/':
         return new Response('Welcome to the API');
@@ -288,16 +288,16 @@ export default {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const target = url.searchParams.get('url') || 'https://httpbin.org/json';
-    
+
     console.log('Making subrequest to:', target);
-    
+
     try {
       const start = Date.now();
       const response = await fetch(target);
       const elapsed = Date.now() - start;
-      
+
       const body = await response.text();
-      
+
       return new Response(JSON.stringify({
         success: true,
         target,
@@ -343,12 +343,12 @@ function navigateTo(path, replace = false) {
 function handleRoute(path) {
   // Parse the path
   const parts = path.split('/').filter(Boolean);
-  
+
   if (parts.length === 0) {
     showViewDirect('welcome');
     return;
   }
-  
+
   switch (parts[0]) {
     case 'defaults':
       showViewDirect('defaults');
@@ -415,7 +415,7 @@ window.addEventListener('popstate', (e) => {
 // View switching (internal, doesn't update URL)
 function showViewDirect(viewName) {
   currentView = viewName;
-  
+
   // Hide all views
   welcomeView.classList.add('hidden');
   defaultsView.classList.add('hidden');
@@ -425,11 +425,12 @@ function showViewDirect(viewName) {
   outboundView.classList.add('hidden');
   tailView.classList.add('hidden');
   workerView.classList.add('hidden');
-  
+
   // Show the selected view
   switch (viewName) {
     case 'welcome':
       welcomeView.classList.remove('hidden');
+      updateWelcomeView();
       break;
     case 'defaults':
       defaultsView.classList.remove('hidden');
@@ -484,6 +485,49 @@ function showView(viewName) {
   }
 }
 
+// Update welcome view based on whether tenants exist
+function updateWelcomeView() {
+  const emptyState = document.getElementById('welcomeEmptyState');
+  const withTenants = document.getElementById('welcomeWithTenants');
+  const footer = document.getElementById('welcomeFooter');
+  const tenantsGrid = document.getElementById('welcomeTenantsGrid');
+  const tenantsCount = document.getElementById('tenantsCount');
+  
+  // Get tenants from sidebar
+  const tenantItems = document.querySelectorAll('#tenantList .sidebar-item');
+  const tenantCount = tenantItems.length;
+  
+  if (tenantCount === 0) {
+    // Show empty state
+    emptyState.classList.remove('hidden');
+    withTenants.classList.add('hidden');
+    footer.classList.remove('hidden');
+  } else {
+    // Show tenants hero
+    emptyState.classList.add('hidden');
+    withTenants.classList.remove('hidden');
+    footer.classList.add('hidden');
+    
+    // Update count
+    tenantsCount.textContent = tenantCount;
+    
+    // Render tenant cards
+    tenantsGrid.innerHTML = '';
+    tenantItems.forEach(item => {
+      const tenantId = item.dataset.tenant;
+      const card = document.createElement('div');
+      card.className = 'tenant-card';
+      card.dataset.tenant = tenantId;
+      card.innerHTML = `
+        <div class="tenant-card-name">${escapeHtml(tenantId)}</div>
+        <div class="tenant-card-meta">Click to manage workers</div>
+      `;
+      card.addEventListener('click', () => showTenantView(tenantId));
+      tenantsGrid.appendChild(card);
+    });
+  }
+}
+
 // Load defaults into the defaults view
 function loadDefaultsIntoView() {
   if (!platformDefaults) return;
@@ -492,6 +536,20 @@ function loadDefaultsIntoView() {
   document.getElementById('defaultsCompatFlagsInput').value = (platformDefaults.compatibilityFlags || []).join(', ');
   document.getElementById('defaultsCpuMsInput').value = platformDefaults.limits?.cpuMs || '';
   document.getElementById('defaultsSubrequestsInput').value = platformDefaults.limits?.subrequests || '';
+}
+
+// Helper to open add worker modal
+function openAddWorkerModal() {
+  if (!selectedTenant) return;
+  addWorkerModal.classList.remove('hidden');
+  document.getElementById('newWorkerId').value = '';
+  document.getElementById('newWorkerEnv').value = '';
+  document.getElementById('workerOutboundSelect').value = '';
+  const tailSelect = document.getElementById('workerTailSelect');
+  if (tailSelect) {
+    Array.from(tailSelect.options).forEach(o => o.selected = false);
+  }
+  document.getElementById('newWorkerId').focus();
 }
 
 // Show tenant view with data loaded (updates URL)
@@ -504,28 +562,29 @@ async function showTenantViewDirect(tenantId) {
   try {
     const res = await fetch(`/api/tenants/${tenantId}`);
     const data = await res.json();
-    
+
     selectedTenant = tenantId;
     selectedWorker = null;
     document.getElementById('tenantViewId').textContent = tenantId;
+    document.getElementById('tenantViewDescription').textContent = DESCRIPTIONS.tenants;
     document.getElementById('tenantEnvInput').value = JSON.stringify(data.config?.env || {}, null, 2);
     document.getElementById('tenantCompatDateInput').value = data.config?.compatibilityDate || '';
     document.getElementById('tenantCompatFlagsInput').value = (data.config?.compatibilityFlags || []).join(', ');
-    
+
     // Set outbound worker selection
     const outboundSelect = document.getElementById('tenantOutboundInput');
     updateSelectOptions(outboundSelect, outboundWorkers, data.associations?.outboundWorkerId);
-    
+
     // Set tail worker selections
     const tailSelect = document.getElementById('tenantTailInput');
     updateMultiSelectOptions(tailSelect, tailWorkers, data.associations?.tailWorkerIds || []);
-    
+
     // Load and render workers for this tenant
     await loadTenantWorkersGrid(tenantId);
-    
+
     // Update sidebar selection
     updateSidebarTenantSelection(tenantId);
-    
+
     showViewDirect('tenant');
   } catch (err) {
     alert('Failed to load tenant: ' + err.message);
@@ -560,24 +619,22 @@ function updateMultiSelectOptions(select, items, selectedValues) {
 // Load workers grid for tenant view
 async function loadTenantWorkersGrid(tenantId) {
   const grid = document.getElementById('tenantWorkersGrid');
+  const countEl = document.getElementById('workersCount');
   try {
     const res = await fetch(`/api/tenants/${tenantId}/workers`);
     const data = await res.json();
     const workers = data.workers || [];
-    
+
+    // Update count badge
+    if (countEl) countEl.textContent = workers.length;
+
     if (workers.length === 0) {
       grid.innerHTML = `<div class="empty-state">
         <p>No workers yet.</p>
-        <button class="btn primary" id="emptyStateCreateWorkerBtn">Create Worker for Tenant</button>
       </div>`;
-      document.getElementById('emptyStateCreateWorkerBtn')?.addEventListener('click', () => {
-        addWorkerModal.classList.remove('hidden');
-        document.getElementById('newWorkerId').value = '';
-        document.getElementById('newWorkerId').focus();
-      });
       return;
     }
-    
+
     grid.innerHTML = workers.map(w => `
       <div class="worker-card" data-worker="${w.id}">
         <div class="worker-card-header">
@@ -587,7 +644,7 @@ async function loadTenantWorkersGrid(tenantId) {
         <div class="worker-card-meta">${formatDate(w.updatedAt)}</div>
       </div>
     `).join('');
-    
+
     // Click handlers for worker cards
     grid.querySelectorAll('.worker-card').forEach(card => {
       card.addEventListener('click', () => {
@@ -613,30 +670,32 @@ function showTemplateView(templateId = null) {
 
 async function showTemplateViewDirect(templateId) {
   editingTemplateId = templateId;
-  
+
+  document.getElementById('templateViewDescription').textContent = DESCRIPTIONS.templates;
+
   const deleteBtn = document.getElementById('deleteTemplateViewBtn');
   const useBtn = document.getElementById('useTemplateBtn');
   const idInput = document.getElementById('templateIdInput');
-  
+
   if (templateId) {
     // Editing existing template
     document.getElementById('templateViewTitle').textContent = `Edit Template: ${templateId}`;
     deleteBtn.classList.remove('hidden');
     useBtn.classList.remove('hidden');
     idInput.disabled = true;
-    
+
     try {
       const res = await fetch(`/api/templates/${templateId}`);
       const data = await res.json();
-      
+
       idInput.value = templateId;
       document.getElementById('templateNameInput').value = data.name || '';
       document.getElementById('templateDescInput').value = data.description || '';
-      
+
       // Load slots into state and render
       templateSlots = data.slots || [];
       renderTemplateSlots();
-      
+
       // Load files
       templateFiles = data.files || { 'src/index.ts': '' };
       renderTemplateFileTabs();
@@ -652,15 +711,15 @@ async function showTemplateViewDirect(templateId) {
     deleteBtn.classList.add('hidden');
     useBtn.classList.add('hidden');
     idInput.disabled = false;
-    
+
     idInput.value = '';
     document.getElementById('templateNameInput').value = '';
     document.getElementById('templateDescInput').value = '';
-    
+
     // Initialize with default slot
     templateSlots = [{ name: 'myVar', description: 'A variable to customize', defaultValue: 'hello' }];
     renderTemplateSlots();
-    
+
     // Initialize with default files
     templateFiles = {
       'src/index.ts': DEFAULT_TEMPLATE_CODE,
@@ -669,7 +728,7 @@ async function showTemplateViewDirect(templateId) {
     renderTemplateFileTabs();
     selectTemplateFile('src/index.ts');
   }
-  
+
   showViewDirect('template');
 }
 
@@ -677,7 +736,7 @@ async function showTemplateViewDirect(templateId) {
 function renderTemplateFileTabs() {
   const tabsContainer = document.getElementById('templateFileTabs');
   tabsContainer.innerHTML = '';
-  
+
   Object.keys(templateFiles).forEach(name => {
     const tab = document.createElement('button');
     tab.className = `tab${name === currentTemplateFile ? ' active' : ''}`;
@@ -700,7 +759,7 @@ function selectTemplateFile(name) {
   if (currentTemplateFile && cmTemplateView) {
     templateFiles[currentTemplateFile] = cmTemplateView.getValue();
   }
-  
+
   currentTemplateFile = name;
   if (cmTemplateView) {
     cmTemplateView.setValue(templateFiles[name] || '');
@@ -719,12 +778,12 @@ function addTemplateFile() {
     }
     return;
   }
-  
+
   // Save current file first
   if (currentTemplateFile && cmTemplateView) {
     templateFiles[currentTemplateFile] = cmTemplateView.getValue();
   }
-  
+
   templateFiles[name] = name.endsWith('.json') ? '{}' : `// ${name}\n`;
   document.getElementById('addTemplateFileModal').classList.add('hidden');
   renderTemplateFileTabs();
@@ -735,7 +794,7 @@ function addTemplateFile() {
 function deleteTemplateFile(name) {
   if (Object.keys(templateFiles).length <= 1) return;
   if (name === 'package.json') return;
-  
+
   delete templateFiles[name];
   if (currentTemplateFile === name) {
     currentTemplateFile = Object.keys(templateFiles)[0];
@@ -748,12 +807,12 @@ function deleteTemplateFile(name) {
 function renderTemplateSlots() {
   const container = document.getElementById('templateSlotsContainer');
   container.innerHTML = '';
-  
+
   if (templateSlots.length === 0) {
     container.innerHTML = '<div class="empty-state">No slots defined. Click "+ Add Slot" to create one.</div>';
     return;
   }
-  
+
   templateSlots.forEach((slot, index) => {
     const item = document.createElement('div');
     item.className = 'slot-item';
@@ -789,21 +848,21 @@ function renderTemplateSlots() {
           </div>
         </div>
         <div class="slot-field">
-          <label>Default Value <span class="label-hint">(TypeScript expression)</span></label>
+          <label>Default Value</label>
           <textarea class="code-input" data-field="defaultValue" data-index="${index}" placeholder="'hello world'">${escapeHtml(slot.defaultValue || '')}</textarea>
         </div>
       </div>
     `;
     container.appendChild(item);
   });
-  
+
   // Add event listeners for inputs and textareas
   container.querySelectorAll('[data-field]').forEach(input => {
     input.addEventListener('input', (e) => {
       const index = parseInt(e.target.dataset.index);
       const field = e.target.dataset.field;
       templateSlots[index][field] = e.target.value;
-      
+
       // Update the code preview in header when name changes
       if (field === 'name') {
         const item = e.target.closest('.slot-item');
@@ -812,12 +871,12 @@ function renderTemplateSlots() {
       }
     });
   });
-  
+
   container.querySelectorAll('button[data-action]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const index = parseInt(e.currentTarget.dataset.index);
       const action = e.currentTarget.dataset.action;
-      
+
       if (action === 'copy') {
         copySlotString(index);
       } else if (action === 'delete') {
@@ -835,7 +894,7 @@ function addTemplateSlot() {
     defaultValue: ''
   });
   renderTemplateSlots();
-  
+
   // Focus the name input of the new slot
   const container = document.getElementById('templateSlotsContainer');
   const lastSlot = container.lastElementChild;
@@ -873,20 +932,20 @@ async function saveTemplateFromView() {
   const id = document.getElementById('templateIdInput').value.trim();
   const name = document.getElementById('templateNameInput').value.trim();
   const description = document.getElementById('templateDescInput').value.trim();
-  
+
   if (!id || !name) {
     alert('Please fill in ID and Name');
     return;
   }
-  
+
   // Save current file content
   if (currentTemplateFile && cmTemplateView) {
     templateFiles[currentTemplateFile] = cmTemplateView.getValue();
   }
-  
+
   // Filter out slots with empty names
   const slots = templateSlots.filter(s => s.name && s.name.trim());
-  
+
   // Update package.json name if it exists
   if (templateFiles['package.json']) {
     try {
@@ -897,14 +956,14 @@ async function saveTemplateFromView() {
       // Ignore if package.json is invalid
     }
   }
-  
+
   const payload = {
     name,
     description,
     slots,
     files: { ...templateFiles },
   };
-  
+
   try {
     if (editingTemplateId) {
       // Update existing
@@ -926,7 +985,7 @@ async function saveTemplateFromView() {
         throw new Error(err.error || 'Failed to create');
       }
     }
-    
+
     await loadTemplates();
     navigateTo('/');
   } catch (err) {
@@ -937,7 +996,7 @@ async function saveTemplateFromView() {
 async function deleteTemplateFromView() {
   if (!editingTemplateId) return;
   if (!confirm(`Delete template "${editingTemplateId}"?`)) return;
-  
+
   try {
     await fetch(`/api/templates/${editingTemplateId}`, { method: 'DELETE' });
     await loadTemplates();
@@ -950,24 +1009,24 @@ async function deleteTemplateFromView() {
 // Use template to create a worker - requires selecting a tenant first
 function useTemplateToCreateWorker() {
   if (!editingTemplateId) return;
-  
+
   // Check if there are any tenants
   const tenantItems = document.querySelectorAll('#tenantList .list-item');
   if (tenantItems.length === 0) {
     alert('Please create a tenant first before creating a worker from this template.');
     return;
   }
-  
+
   // If a tenant is already selected, go directly to create page
   if (selectedTenant) {
     navigateTo(`/tenants/${selectedTenant}/create-from-template/${editingTemplateId}`);
     return;
   }
-  
+
   // Otherwise, prompt to select a tenant
   const tenantIds = Array.from(tenantItems).map(item => item.dataset.tenant);
   const tenant = prompt(`Select a tenant to create a worker for:\n\nAvailable tenants: ${tenantIds.join(', ')}`);
-  
+
   if (tenant && tenantIds.includes(tenant)) {
     navigateTo(`/tenants/${tenant}/create-from-template/${editingTemplateId}`);
   } else if (tenant) {
@@ -989,20 +1048,20 @@ function showOutboundView(outboundId = null) {
 
 async function showOutboundViewDirect(outboundId) {
   editingOutboundId = outboundId;
-  
+
   const deleteBtn = document.getElementById('deleteOutboundViewBtn');
   const idInput = document.getElementById('outboundIdInput');
-  
+
   if (outboundId) {
     // Editing existing
     document.getElementById('outboundViewTitle').textContent = `Edit Outbound: ${outboundId}`;
     deleteBtn.classList.remove('hidden');
     idInput.disabled = true;
-    
+
     try {
       const res = await fetch(`/api/outbound-workers/${outboundId}`);
       const data = await res.json();
-      
+
       idInput.value = outboundId;
       document.getElementById('outboundNameInput').value = data.name || '';
       cmOutboundView.setValue(data.files?.['src/index.ts'] || '');
@@ -1016,12 +1075,12 @@ async function showOutboundViewDirect(outboundId) {
     document.getElementById('outboundViewTitle').textContent = 'New Outbound Worker';
     deleteBtn.classList.add('hidden');
     idInput.disabled = false;
-    
+
     idInput.value = '';
     document.getElementById('outboundNameInput').value = '';
     cmOutboundView.setValue(DEFAULT_OUTBOUND_CODE);
   }
-  
+
   showViewDirect('outbound');
 }
 
@@ -1029,12 +1088,12 @@ async function saveOutboundFromView() {
   const id = document.getElementById('outboundIdInput').value.trim();
   const name = document.getElementById('outboundNameInput').value.trim();
   const code = cmOutboundView.getValue();
-  
+
   if (!id || !name) {
     alert('Please fill in ID and Name');
     return;
   }
-  
+
   const payload = {
     name,
     files: {
@@ -1042,7 +1101,7 @@ async function saveOutboundFromView() {
       'package.json': JSON.stringify({ name: id, main: 'src/index.ts' }, null, 2),
     },
   };
-  
+
   try {
     if (editingOutboundId) {
       // Update existing
@@ -1064,7 +1123,7 @@ async function saveOutboundFromView() {
         throw new Error(err.error || 'Failed to create');
       }
     }
-    
+
     await loadOutboundWorkers();
     navigateTo('/');
   } catch (err) {
@@ -1075,7 +1134,7 @@ async function saveOutboundFromView() {
 async function deleteOutboundFromView() {
   if (!editingOutboundId) return;
   if (!confirm(`Delete outbound worker "${editingOutboundId}"?`)) return;
-  
+
   try {
     await fetch(`/api/outbound-workers/${editingOutboundId}`, { method: 'DELETE' });
     await loadOutboundWorkers();
@@ -1099,20 +1158,20 @@ function showTailView(tailId = null) {
 
 async function showTailViewDirect(tailId) {
   editingTailId = tailId;
-  
+
   const deleteBtn = document.getElementById('deleteTailViewBtn');
   const idInput = document.getElementById('tailIdInput');
-  
+
   if (tailId) {
     // Editing existing
     document.getElementById('tailViewTitle').textContent = `Edit Tail Worker: ${tailId}`;
     deleteBtn.classList.remove('hidden');
     idInput.disabled = true;
-    
+
     try {
       const res = await fetch(`/api/tail-workers/${tailId}`);
       const data = await res.json();
-      
+
       idInput.value = tailId;
       document.getElementById('tailNameInput').value = data.name || '';
       cmTailView.setValue(data.files?.['src/index.ts'] || '');
@@ -1126,12 +1185,12 @@ async function showTailViewDirect(tailId) {
     document.getElementById('tailViewTitle').textContent = 'New Tail Worker';
     deleteBtn.classList.add('hidden');
     idInput.disabled = false;
-    
+
     idInput.value = '';
     document.getElementById('tailNameInput').value = '';
     cmTailView.setValue(DEFAULT_TAIL_CODE);
   }
-  
+
   showViewDirect('tail');
 }
 
@@ -1139,12 +1198,12 @@ async function saveTailFromView() {
   const id = document.getElementById('tailIdInput').value.trim();
   const name = document.getElementById('tailNameInput').value.trim();
   const code = cmTailView.getValue();
-  
+
   if (!id || !name) {
     alert('Please fill in ID and Name');
     return;
   }
-  
+
   const payload = {
     name,
     files: {
@@ -1152,7 +1211,7 @@ async function saveTailFromView() {
       'package.json': JSON.stringify({ name: id, main: 'src/index.ts' }, null, 2),
     },
   };
-  
+
   try {
     if (editingTailId) {
       // Update existing
@@ -1174,7 +1233,7 @@ async function saveTailFromView() {
         throw new Error(err.error || 'Failed to create');
       }
     }
-    
+
     await loadTailWorkers();
     navigateTo('/');
   } catch (err) {
@@ -1185,7 +1244,7 @@ async function saveTailFromView() {
 async function deleteTailFromView() {
   if (!editingTailId) return;
   if (!confirm(`Delete tail worker "${editingTailId}"?`)) return;
-  
+
   try {
     await fetch(`/api/tail-workers/${editingTailId}`, { method: 'DELETE' });
     await loadTailWorkers();
@@ -1202,19 +1261,19 @@ async function deleteTailFromView() {
 // Show create-from-template view for a specific template
 async function showCreateFromTemplateView(tenantId, templateId) {
   selectedTenant = tenantId;
-  
+
   // Set tenant context
   document.getElementById('templateWorkerTenantName').textContent = tenantId;
-  
+
   // Reset form
   document.getElementById('templateWorkerIdInput').value = '';
   document.getElementById('templateWorkerSlotsContainer').innerHTML = '<div class="loading">Loading template...</div>';
-  
+
   // Update sidebar selection
   updateSidebarTenantSelection(tenantId);
-  
+
   showViewDirect('templateWorker');
-  
+
   // Load the template
   try {
     const res = await fetch(`/api/templates/${templateId}`);
@@ -1223,26 +1282,26 @@ async function showCreateFromTemplateView(tenantId, templateId) {
     }
     const template = await res.json();
     currentTemplateForWorker = template;
-    
+
     // Update view title
     document.getElementById('templateWorkerViewTitle').textContent = `Create Worker from "${template.name}"`;
-    
+
     // Show template info
     document.getElementById('templateWorkerInfoName').textContent = template.name;
     document.getElementById('templateWorkerInfoDesc').textContent = template.description || 'No description provided.';
-    
+
     // Render slot inputs
     renderTemplateWorkerSlots(template.slots || []);
-    
+
     // Reset preview state
     previewFiles = {};
     currentPreviewFile = null;
-    
+
     // Generate initial preview (this will also render tabs)
     await updateTemplateWorkerPreview();
   } catch (err) {
     console.error('Failed to load template:', err);
-    document.getElementById('templateWorkerSlotsContainer').innerHTML = 
+    document.getElementById('templateWorkerSlotsContainer').innerHTML =
       `<div class="error-state">Failed to load template: ${escapeHtml(err.message)}</div>`;
   }
 }
@@ -1250,27 +1309,27 @@ async function showCreateFromTemplateView(tenantId, templateId) {
 // Render slot inputs in template worker view
 function renderTemplateWorkerSlots(slots) {
   const container = document.getElementById('templateWorkerSlotsContainer');
-  
+
   if (!slots || slots.length === 0) {
     container.innerHTML = '<div class="empty-state">This template has no configurable slots.</div>';
     document.getElementById('templateWorkerSlotsSection').style.display = 'none';
     return;
   }
-  
+
   document.getElementById('templateWorkerSlotsSection').style.display = 'block';
-  
+
   container.innerHTML = slots.map(slot => `
     <div class="slot-input-group">
       <div class="slot-input-header">
         <label><code class="slot-name">{{${slot.name}}}</code></label>
         <span class="slot-description">${escapeHtml(slot.description || '')}</span>
       </div>
-      <textarea class="code-input" 
-             data-slot="${slot.name}" 
+      <textarea class="code-input"
+             data-slot="${slot.name}"
              placeholder="${escapeHtml(slot.defaultValue || '')}">${escapeHtml(slot.defaultValue || '')}</textarea>
     </div>
   `).join('');
-  
+
   // Add change listeners to update preview
   container.querySelectorAll('textarea[data-slot]').forEach(input => {
     input.addEventListener('input', () => updateTemplateWorkerPreview());
@@ -1291,9 +1350,9 @@ function getTemplateWorkerSlotValues() {
 // Update the preview in template worker view
 async function updateTemplateWorkerPreview() {
   if (!currentTemplateForWorker) return;
-  
+
   const slotValues = getTemplateWorkerSlotValues();
-  
+
   try {
     const res = await fetch(`/api/templates/${currentTemplateForWorker.id}/generate`, {
       method: 'POST',
@@ -1301,11 +1360,11 @@ async function updateTemplateWorkerPreview() {
       body: JSON.stringify({ slotValues }),
     });
     const data = await res.json();
-    
+
     if (res.ok && data.files) {
       previewFiles = data.files;
       renderPreviewTabs();
-      
+
       // Select first file if none selected or current doesn't exist
       if (!currentPreviewFile || !previewFiles[currentPreviewFile]) {
         currentPreviewFile = Object.keys(previewFiles)[0];
@@ -1327,20 +1386,20 @@ async function updateTemplateWorkerPreview() {
 function renderPreviewTabs() {
   const tabsContainer = document.getElementById('templateWorkerPreviewTabs');
   if (!tabsContainer) return;
-  
+
   const fileNames = Object.keys(previewFiles);
-  
+
   if (fileNames.length === 0) {
     tabsContainer.innerHTML = '';
     return;
   }
-  
+
   tabsContainer.innerHTML = fileNames.map(name => `
     <button class="tab${name === currentPreviewFile ? ' active' : ''}" data-file="${escapeHtml(name)}">
       ${escapeHtml(name)}
     </button>
   `).join('');
-  
+
   // Add click handlers
   tabsContainer.querySelectorAll('.tab').forEach(tab => {
     tab.addEventListener('click', () => {
@@ -1352,7 +1411,7 @@ function renderPreviewTabs() {
 // Select a preview file
 function selectPreviewFile(fileName) {
   currentPreviewFile = fileName;
-  
+
   // Update tab active states
   const tabsContainer = document.getElementById('templateWorkerPreviewTabs');
   if (tabsContainer) {
@@ -1360,7 +1419,7 @@ function selectPreviewFile(fileName) {
       tab.classList.toggle('active', tab.dataset.file === fileName);
     });
   }
-  
+
   // Update editor content
   if (cmTemplateWorkerPreview && previewFiles[fileName]) {
     cmTemplateWorkerPreview.setValue(previewFiles[fileName]);
@@ -1374,16 +1433,16 @@ async function createWorkerFromTemplateView() {
     alert('Please select a template');
     return;
   }
-  
+
   const workerId = document.getElementById('templateWorkerIdInput').value.trim();
   if (!workerId) {
     alert('Please enter a Worker ID');
     return;
   }
-  
+
   const slotValues = getTemplateWorkerSlotValues();
   console.log('[DEBUG] createWorkerFromTemplateView - slotValues:', slotValues);
-  
+
   try {
     // Generate files from template
     const genRes = await fetch(`/api/templates/${currentTemplateForWorker.id}/generate`, {
@@ -1393,28 +1452,28 @@ async function createWorkerFromTemplateView() {
     });
     const genData = await genRes.json();
     console.log('[DEBUG] createWorkerFromTemplateView - genData:', genData);
-    
+
     if (!genRes.ok) {
       throw new Error(genData.error || 'Failed to generate from template');
     }
-    
+
     console.log('[DEBUG] createWorkerFromTemplateView - creating worker with files:', genData.files);
-    
+
     // Create worker with generated files
     const createRes = await fetch(`/api/tenants/${selectedTenant}/workers`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        id: workerId, 
+      body: JSON.stringify({
+        id: workerId,
         files: genData.files,
       }),
     });
     const createData = await createRes.json();
     console.log('[DEBUG] createWorkerFromTemplateView - createData:', createData);
-    
+
     // Refresh sidebar workers list
     await loadWorkers(selectedTenant);
-    
+
     // Navigate to the worker editor
     showWorkerView(selectedTenant, workerId);
   } catch (err) {
@@ -1431,19 +1490,19 @@ function showWorkerView(tenantId, workerId) {
 async function showWorkerViewDirect(tenantId, workerId) {
   selectedTenant = tenantId;
   selectedWorker = workerId;
-  
+
   // Update breadcrumb
   document.getElementById('workerBreadcrumb').innerHTML = `
     <span>${escapeHtml(tenantId)}</span> / <span>${escapeHtml(workerId)}</span>
   `;
-  
+
   // Show save button, hide create button
   saveWorkerBtn.style.display = 'inline-flex';
   createWorkerBtn.style.display = 'none';
-  
+
   // Update sidebar selection
   updateSidebarTenantSelection(tenantId);
-  
+
   try {
     const res = await fetch(`/api/tenants/${tenantId}/workers/${workerId}`);
     const data = await res.json();
@@ -1457,7 +1516,7 @@ async function showWorkerViewDirect(tenantId, workerId) {
     navigateTo(`/tenants/${tenantId}`);
     return;
   }
-  
+
   showViewDirect('worker');
 }
 
@@ -1502,7 +1561,7 @@ function initCodeMirror() {
     indentWithTabs: false,
     lineWrapping: true,
   };
-  
+
   // Main editor
   cmEditor = CodeMirror.fromTextArea(editorTextarea, { ...cmOptions, autofocus: true });
   cmEditor.on('change', () => {
@@ -1510,15 +1569,15 @@ function initCodeMirror() {
       files[currentFile] = cmEditor.getValue();
     }
   });
-  
+
   // Outbound worker editors
   cmNewOutbound = CodeMirror(document.getElementById('newOutboundCodeContainer'), cmOptions);
   cmOutboundDetail = CodeMirror(document.getElementById('outboundDetailCodeContainer'), cmOptions);
-  
+
   // Tail worker editors
   cmNewTail = CodeMirror(document.getElementById('newTailCodeContainer'), cmOptions);
   cmTailDetail = CodeMirror(document.getElementById('tailDetailCodeContainer'), cmOptions);
-  
+
   // Full-screen view editors
   cmTemplateView = CodeMirror(document.getElementById('templateCodeContainer'), cmOptions);
   cmTemplateView.on('change', () => {
@@ -1526,7 +1585,7 @@ function initCodeMirror() {
       templateFiles[currentTemplateFile] = cmTemplateView.getValue();
     }
   });
-  
+
   cmOutboundView = CodeMirror(document.getElementById('outboundCodeContainer'), cmOptions);
   cmTailView = CodeMirror(document.getElementById('tailCodeContainer'), cmOptions);
   cmTemplateWorkerPreview = CodeMirror(document.getElementById('templateWorkerPreviewContainer'), { ...cmOptions, readOnly: true });
@@ -1544,43 +1603,66 @@ async function init() {
     loadTemplates(),
   ]);
   setupEventListeners();
-  
+
   // Initialize routing based on current URL
   const path = window.location.pathname;
   if (path && path !== '/') {
     // Replace current history entry to ensure proper state
     history.replaceState({ path }, '', path);
     handleRoute(path);
+  } else {
+    // We're at root, update welcome view now that tenants are loaded
+    updateWelcomeView();
   }
 }
 
 function setupEventListeners() {
-  // Welcome card buttons
+  // Welcome card buttons (empty state)
   document.getElementById('welcomeCreateTenant').querySelector('.btn').addEventListener('click', () => {
     addTenantModal.classList.remove('hidden');
     document.getElementById('newTenantId').value = '';
     document.getElementById('newTenantEnv').value = '';
     document.getElementById('newTenantId').focus();
   });
-  
+
   document.getElementById('welcomeCreateTemplate').querySelector('.btn').addEventListener('click', () => {
     showTemplateView(null); // New template
   });
-  
+
   document.getElementById('welcomeAddOutbound').addEventListener('click', () => {
     showOutboundView(null); // New outbound
   });
-  
+
   document.getElementById('welcomeAddTail').addEventListener('click', () => {
     showTailView(null); // New tail
   });
   
+  // Welcome with tenants buttons
+  document.getElementById('welcomeAddTenantBtn').addEventListener('click', () => {
+    addTenantModal.classList.remove('hidden');
+    document.getElementById('newTenantId').value = '';
+    document.getElementById('newTenantEnv').value = '';
+    document.getElementById('newTenantId').focus();
+  });
+  
+  document.getElementById('welcomeCreateTemplate2').querySelector('.btn').addEventListener('click', () => {
+    showTemplateView(null);
+  });
+  
+  document.getElementById('welcomeAddOutbound2').addEventListener('click', () => {
+    showOutboundView(null);
+  });
+  
+  document.getElementById('welcomeAddTail2').addEventListener('click', () => {
+    showTailView(null);
+  });
+
   // Logo click - go to home
   document.getElementById('logoLink').addEventListener('click', (e) => {
     e.preventDefault();
     navigateTo('/');
   });
-  
+
   // Back buttons in views
   document.getElementById('defaultsBackBtn').addEventListener('click', () => navigateTo('/'));
   document.getElementById('tenantBackBtn').addEventListener('click', () => navigateTo('/'));
@@ -1601,13 +1683,13 @@ function setupEventListeners() {
       navigateTo('/');
     }
   });
-  
+
   // Template view buttons
   document.getElementById('saveTemplateViewBtn').addEventListener('click', saveTemplateFromView);
   document.getElementById('deleteTemplateViewBtn').addEventListener('click', deleteTemplateFromView);
   document.getElementById('addSlotBtn').addEventListener('click', addTemplateSlot);
   document.getElementById('useTemplateBtn').addEventListener('click', useTemplateToCreateWorker);
-  
+
   // Template file management
   document.getElementById('addTemplateFile').addEventListener('click', () => {
     document.getElementById('addTemplateFileModal').classList.remove('hidden');
@@ -1622,15 +1704,15 @@ function setupEventListeners() {
     if (e.key === 'Enter') addTemplateFile();
     if (e.key === 'Escape') document.getElementById('addTemplateFileModal').classList.add('hidden');
   });
-  
+
   // Outbound view buttons
   document.getElementById('saveOutboundViewBtn').addEventListener('click', saveOutboundFromView);
   document.getElementById('deleteOutboundViewBtn').addEventListener('click', deleteOutboundFromView);
-  
+
   // Tail view buttons
   document.getElementById('saveTailViewBtn').addEventListener('click', saveTailFromView);
   document.getElementById('deleteTailViewBtn').addEventListener('click', deleteTailFromView);
-  
+
   // Template worker view (create from template)
   document.getElementById('createTemplateWorkerBtn').addEventListener('click', createWorkerFromTemplateView);
 
@@ -1699,27 +1781,12 @@ function setupEventListeners() {
   document.getElementById('cancelTenantEdit').addEventListener('click', () => tenantDetailModal.classList.add('hidden'));
   document.getElementById('saveTenantBtn').addEventListener('click', saveTenant);
   document.getElementById('deleteTenantBtn').addEventListener('click', deleteTenant);
-  
+
   // Tenant view buttons
   document.getElementById('saveTenantViewBtn').addEventListener('click', saveTenantFromView);
   document.getElementById('deleteTenantViewBtn').addEventListener('click', deleteTenantFromView);
-  
-  // Helper to open add worker modal
-  function openAddWorkerModal() {
-    if (!selectedTenant) return;
-    addWorkerModal.classList.remove('hidden');
-    document.getElementById('newWorkerId').value = '';
-    document.getElementById('newWorkerEnv').value = '';
-    document.getElementById('workerOutboundSelect').value = '';
-    const tailSelect = document.getElementById('workerTailSelect');
-    if (tailSelect) {
-      Array.from(tailSelect.options).forEach(o => o.selected = false);
-    }
-    document.getElementById('newWorkerId').focus();
-  }
-  
+
   document.getElementById('addWorkerToTenantBtn').addEventListener('click', openAddWorkerModal);
-  document.getElementById('emptyStateCreateWorkerBtn')?.addEventListener('click', openAddWorkerModal);
 
   // Platform defaults modal
   document.getElementById('editDefaultsBtn').addEventListener('click', openPlatformDefaults);
@@ -1736,10 +1803,10 @@ function setupEventListeners() {
       section.classList.toggle('collapsed');
     });
   });
-  
+
   // Info icon tooltips
   setupInfoTooltips();
-  
+
   // Populate welcome card descriptions from constants
   document.querySelectorAll('.welcome-card[data-description]').forEach(card => {
     const key = card.dataset.description;
@@ -1779,16 +1846,16 @@ const DEFAULT_OUTBOUND_CODE = `import { WorkerEntrypoint } from 'cloudflare:work
 export class OutboundHandler extends WorkerEntrypoint {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    
+
     // Only allow requests to zombo.com
     if (url.hostname === 'zombo.com' || url.hostname.endsWith('.zombo.com')) {
       console.log('[Outbound] Allowed:', request.method, request.url);
       return fetch(request);
     }
-    
+
     // Block everything else
     console.log('[Outbound] Blocked:', request.method, request.url);
-    return new Response('no no - outbound requests are only allowed to zombo.com', { 
+    return new Response('no no - outbound requests are only allowed to zombo.com', {
       status: 403,
       headers: { 'Content-Type': 'text/plain' }
     });
@@ -1822,7 +1889,7 @@ const DEFAULT_TAIL_CODE = `export default {
         logs: event.logs?.length ?? 0,
         exceptions: event.exceptions?.length ?? 0,
       });
-      
+
       // Log any exceptions
       if (event.exceptions?.length) {
         for (const ex of event.exceptions) {
@@ -1846,13 +1913,13 @@ async function loadDefaults() {
 
 function openPlatformDefaults() {
   if (!platformDefaults) return;
-  
+
   document.getElementById('defaultsEnvEditor').value = JSON.stringify(platformDefaults.env || {}, null, 2);
   document.getElementById('defaultsCompatDate').value = platformDefaults.compatibilityDate || '';
   document.getElementById('defaultsCompatFlags').value = (platformDefaults.compatibilityFlags || []).join(', ');
   document.getElementById('defaultsCpuMs').value = platformDefaults.limits?.cpuMs || '';
   document.getElementById('defaultsSubrequests').value = platformDefaults.limits?.subrequests || '';
-  
+
   platformDefaultsModal.classList.remove('hidden');
 }
 
@@ -1871,7 +1938,7 @@ async function savePlatformDefaults() {
   const compatibilityDate = document.getElementById('defaultsCompatDate').value.trim() || undefined;
   const flagsText = document.getElementById('defaultsCompatFlags').value.trim();
   const compatibilityFlags = flagsText ? flagsText.split(',').map(f => f.trim()).filter(Boolean) : undefined;
-  
+
   const cpuMs = parseInt(document.getElementById('defaultsCpuMs').value) || undefined;
   const subrequests = parseInt(document.getElementById('defaultsSubrequests').value) || undefined;
   const limits = (cpuMs || subrequests) ? { cpuMs, subrequests } : undefined;
@@ -1894,6 +1961,10 @@ async function loadTenants() {
     const res = await fetch('/api/tenants');
     const data = await res.json();
     renderTenants(data.tenants || []);
+    // Update welcome view if currently shown
+    if (currentView === 'welcome') {
+      updateWelcomeView();
+    }
   } catch (err) {
     console.error('Failed to load tenants:', err);
     tenantList.innerHTML = '<div class="error-state">Failed to load</div>';
@@ -1955,12 +2026,12 @@ async function createTemplate() {
   const name = document.getElementById('newTemplateName').value.trim();
   const description = document.getElementById('newTemplateDescription').value.trim();
   const code = cmNewTemplate.getValue();
-  
+
   if (!id || !name) {
     alert('Please fill in ID and Name');
     return;
   }
-  
+
   let slots = [];
   const slotsText = document.getElementById('newTemplateSlots').value.trim();
   if (slotsText) {
@@ -1987,12 +2058,12 @@ async function createTemplate() {
         },
       }),
     });
-    
+
     if (!res.ok) {
       const err = await res.json();
       throw new Error(err.error || 'Failed to create');
     }
-    
+
     addTemplateModal.classList.add('hidden');
     await loadTemplates();
   } catch (err) {
@@ -2014,7 +2085,7 @@ async function saveTemplate() {
   const name = document.getElementById('templateDetailName').value.trim();
   const description = document.getElementById('templateDetailDescription').value.trim();
   const code = cmTemplateDetail.getValue();
-  
+
   let slots = [];
   const slotsText = document.getElementById('templateDetailSlots').value.trim();
   if (slotsText) {
@@ -2064,12 +2135,12 @@ async function deleteTemplateHandler() {
 function renderTemplateSlotInputs(slots, containerId) {
   const container = document.getElementById(containerId);
   container.innerHTML = '';
-  
+
   if (!slots || slots.length === 0) {
     container.innerHTML = '<div class="empty-state">No slots defined</div>';
     return;
   }
-  
+
   slots.forEach(slot => {
     const group = document.createElement('div');
     group.className = 'slot-input-group';
@@ -2130,13 +2201,13 @@ async function openTemplateDetail(id) {
   try {
     const res = await fetch(`/api/templates/${id}`);
     const data = await res.json();
-    
+
     document.getElementById('templateDetailId').textContent = id;
     document.getElementById('templateDetailName').value = data.name || '';
     document.getElementById('templateDetailDescription').value = data.description || '';
     document.getElementById('templateDetailSlots').value = JSON.stringify(data.slots || [], null, 2);
     cmTemplateDetail.setValue(data.files?.['src/index.ts'] || '');
-    
+
     templateDetailModal.classList.remove('hidden');
     setTimeout(() => cmTemplateDetail.refresh(), 10);
   } catch (err) {
@@ -2148,12 +2219,12 @@ async function openTemplateDetail(id) {
 function updateTemplateSelects() {
   const container = document.getElementById('templateButtonsContainer');
   if (!container) return;
-  
+
   if (templates.length === 0) {
     container.innerHTML = '<div class="template-buttons-empty">No templates available. Create a template first.</div>';
     return;
   }
-  
+
   container.innerHTML = templates.map(t => `
     <button class="template-button" data-template-id="${escapeHtml(t.id)}">
       <div class="template-button-icon">
@@ -2168,7 +2239,7 @@ function updateTemplateSelects() {
       ${t.description ? `<span class="template-button-desc">${escapeHtml(t.description)}</span>` : ''}
     </button>
   `).join('');
-  
+
   // Add click handlers
   container.querySelectorAll('.template-button').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -2185,7 +2256,7 @@ function updateTemplateSelects() {
 const originalCreateWorker = createWorker;
 async function createWorker() {
   const workerType = document.querySelector('input[name="workerType"]:checked')?.value;
-  
+
   if (workerType === 'template') {
     await createWorkerFromTemplate();
   } else {
@@ -2213,8 +2284,8 @@ async function createWorker() {
       await fetch(`/api/tenants/${selectedTenant}/workers`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          id, 
+        body: JSON.stringify({
+          id,
           files,
           env: Object.keys(env).length > 0 ? env : undefined,
           outboundWorkerId,
@@ -2235,15 +2306,15 @@ async function createWorkerFromTemplate() {
     alert('Please select a template');
     return;
   }
-  
+
   const id = document.getElementById('templateNewWorkerId').value.trim();
   if (!id) {
     alert('Please enter a Worker ID');
     return;
   }
-  
+
   const slotValues = getSlotValuesFromInputs('workerTemplateSlots');
-  
+
   try {
     // Generate files from template
     const genRes = await fetch(`/api/templates/${selectedTemplateForWorker.id}/generate`, {
@@ -2252,21 +2323,21 @@ async function createWorkerFromTemplate() {
       body: JSON.stringify({ slotValues }),
     });
     const genData = await genRes.json();
-    
+
     if (!genRes.ok) {
       throw new Error(genData.error || 'Failed to generate from template');
     }
-    
+
     // Create worker with generated files
     await fetch(`/api/tenants/${selectedTenant}/workers`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        id, 
+      body: JSON.stringify({
+        id,
         files: genData.files,
       }),
     });
-    
+
     addWorkerModal.classList.add('hidden');
     await loadWorkers(selectedTenant);
     navigateTo(`/tenants/${selectedTenant}/workers/${id}`);
@@ -2307,7 +2378,7 @@ async function createTenant() {
 
 async function saveTenant() {
   const tenantId = document.getElementById('tenantDetailId').textContent;
-  
+
   let env = {};
   const envText = document.getElementById('tenantEnvEditor').value.trim();
   if (envText) {
@@ -2332,9 +2403,9 @@ async function saveTenant() {
     await fetch(`/api/tenants/${tenantId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        env, 
-        compatibilityDate, 
+      body: JSON.stringify({
+        env,
+        compatibilityDate,
         compatibilityFlags,
         outboundWorkerId,
         tailWorkerIds: tailWorkerIds.length > 0 ? tailWorkerIds : undefined,
@@ -2350,7 +2421,7 @@ async function saveTenant() {
 // Save tenant from tenant view
 async function saveTenantFromView() {
   const tenantId = document.getElementById('tenantViewId').textContent;
-  
+
   let env = {};
   const envText = document.getElementById('tenantEnvInput').value.trim();
   if (envText) {
@@ -2374,9 +2445,9 @@ async function saveTenantFromView() {
     await fetch(`/api/tenants/${tenantId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        env, 
-        compatibilityDate, 
+      body: JSON.stringify({
+        env,
+        compatibilityDate,
         compatibilityFlags,
         outboundWorkerId,
         tailWorkerIds: tailWorkerIds.length > 0 ? tailWorkerIds : undefined,
@@ -2464,7 +2535,7 @@ async function createOutboundWorker() {
   const id = document.getElementById('newOutboundId').value.trim();
   const name = document.getElementById('newOutboundName').value.trim();
   const code = cmNewOutbound.getValue();
-  
+
   if (!id || !name) {
     alert('Please fill in ID and Name');
     return;
@@ -2483,12 +2554,12 @@ async function createOutboundWorker() {
         },
       }),
     });
-    
+
     if (!res.ok) {
       const err = await res.json();
       throw new Error(err.error || 'Failed to create');
     }
-    
+
     addOutboundModal.classList.add('hidden');
     await loadOutboundWorkers();
   } catch (err) {
@@ -2547,7 +2618,7 @@ async function createTailWorker() {
   const id = document.getElementById('newTailId').value.trim();
   const name = document.getElementById('newTailName').value.trim();
   const code = cmNewTail.getValue();
-  
+
   if (!id || !name) {
     alert('Please fill in ID and Name');
     return;
@@ -2566,12 +2637,12 @@ async function createTailWorker() {
         },
       }),
     });
-    
+
     if (!res.ok) {
       const err = await res.json();
       throw new Error(err.error || 'Failed to create');
     }
-    
+
     addTailModal.classList.add('hidden');
     await loadTailWorkers();
   } catch (err) {
@@ -2800,7 +2871,7 @@ function updateOutboundSelects() {
     document.getElementById('tenantOutboundWorker'),
     document.getElementById('workerOutboundSelect'),
   ];
-  
+
   selects.forEach(select => {
     if (!select) return;
     const currentValue = select.value;
@@ -2808,14 +2879,14 @@ function updateOutboundSelects() {
     const firstOption = select.options[0];
     select.innerHTML = '';
     select.appendChild(firstOption);
-    
+
     outboundWorkers.forEach(w => {
       const option = document.createElement('option');
       option.value = w.id;
       option.textContent = w.name || w.id;
       select.appendChild(option);
     });
-    
+
     // Restore selection if still valid
     if (currentValue && outboundWorkers.some(w => w.id === currentValue)) {
       select.value = currentValue;
@@ -2829,12 +2900,12 @@ function updateTailSelects() {
     document.getElementById('tenantTailWorkers'),
     document.getElementById('workerTailSelect'),
   ];
-  
+
   selects.forEach(select => {
     if (!select) return;
     const selectedValues = Array.from(select.selectedOptions).map(o => o.value);
     select.innerHTML = '';
-    
+
     tailWorkers.forEach(w => {
       const option = document.createElement('option');
       option.value = w.id;
@@ -2851,11 +2922,11 @@ async function openOutboundDetail(id) {
   try {
     const res = await fetch(`/api/outbound-workers/${id}`);
     const data = await res.json();
-    
+
     document.getElementById('outboundDetailId').textContent = id;
     document.getElementById('outboundDetailName').value = data.name || '';
     cmOutboundDetail.setValue(data.files?.['src/index.ts'] || '');
-    
+
     outboundDetailModal.classList.remove('hidden');
     setTimeout(() => cmOutboundDetail.refresh(), 10);
   } catch (err) {
@@ -2867,11 +2938,11 @@ async function openTailDetail(id) {
   try {
     const res = await fetch(`/api/tail-workers/${id}`);
     const data = await res.json();
-    
+
     document.getElementById('tailDetailId').textContent = id;
     document.getElementById('tailDetailName').value = data.name || '';
     cmTailDetail.setValue(data.files?.['src/index.ts'] || '');
-    
+
     tailDetailModal.classList.remove('hidden');
     setTimeout(() => cmTailDetail.refresh(), 10);
   } catch (err) {
@@ -2883,23 +2954,23 @@ async function openTenantDetail(tenantId) {
   try {
     const res = await fetch(`/api/tenants/${tenantId}`);
     const data = await res.json();
-    
+
     document.getElementById('tenantDetailId').textContent = tenantId;
     document.getElementById('tenantEnvEditor').value = JSON.stringify(data.config?.env || {}, null, 2);
     document.getElementById('tenantCompatDate').value = data.config?.compatibilityDate || '';
     document.getElementById('tenantCompatFlags').value = (data.config?.compatibilityFlags || []).join(', ');
-    
+
     // Set outbound worker selection
     const outboundSelect = document.getElementById('tenantOutboundWorker');
     outboundSelect.value = data.associations?.outboundWorkerId || '';
-    
+
     // Set tail worker selections
     const tailSelect = document.getElementById('tenantTailWorkers');
     const selectedTails = data.associations?.tailWorkerIds || [];
     Array.from(tailSelect.options).forEach(option => {
       option.selected = selectedTails.includes(option.value);
     });
-    
+
     tenantDetailModal.classList.remove('hidden');
   } catch (err) {
     alert('Failed to load tenant: ' + err.message);
@@ -2914,13 +2985,13 @@ function selectTenant(tenantId) {
   workersSection.style.display = 'block';
   saveWorkerBtn.style.display = 'none';
   createWorkerBtn.style.display = 'inline-flex';
-  
+
   // Re-render tenants to update selection
   const items = tenantList.querySelectorAll('.list-item');
   items.forEach(item => {
     item.classList.toggle('selected', item.dataset.tenant === tenantId);
   });
-  
+
   loadWorkers(tenantId);
   updateContext();
 }
@@ -2930,12 +3001,12 @@ function updateSidebarTenantSelection(tenantId) {
   selectedTenant = tenantId;
   selectedTenantBadge.textContent = tenantId;
   workersSection.style.display = 'block';
-  
+
   const items = tenantList.querySelectorAll('.list-item');
   items.forEach(item => {
     item.classList.toggle('selected', item.dataset.tenant === tenantId);
   });
-  
+
   loadWorkers(tenantId);
 }
 
@@ -2943,18 +3014,18 @@ function selectWorker(workerId) {
   selectedWorker = workerId;
   saveWorkerBtn.style.display = 'inline-flex';
   createWorkerBtn.style.display = 'none';
-  
+
   const items = workerList.querySelectorAll('.list-item');
   items.forEach(item => {
     item.classList.toggle('selected', item.dataset.worker === workerId);
   });
-  
+
   updateContext();
 }
 
 async function selectWorkerAndLoad(workerId) {
   selectWorker(workerId);
-  
+
   try {
     const res = await fetch(`/api/tenants/${selectedTenant}/workers/${workerId}`);
     const data = await res.json();
@@ -3165,7 +3236,7 @@ function formatDate(dateStr) {
   const date = new Date(dateStr);
   const now = new Date();
   const diff = now - date;
-  
+
   if (diff < 60000) return 'just now';
   if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
   if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
@@ -3178,21 +3249,21 @@ function setupInfoTooltips() {
   const tooltip = document.createElement('div');
   tooltip.className = 'info-tooltip';
   document.body.appendChild(tooltip);
-  
+
   // Setup hover handlers for all info icons
   document.querySelectorAll('.info-icon[data-info]').forEach(icon => {
     icon.addEventListener('mouseenter', (e) => {
       const key = e.currentTarget.dataset.info;
       const text = DESCRIPTIONS[key];
       if (!text) return;
-      
+
       tooltip.textContent = text;
-      
+
       // Position tooltip to the right of the icon
       const rect = e.currentTarget.getBoundingClientRect();
       tooltip.style.left = `${rect.right + 8}px`;
       tooltip.style.top = `${rect.top - 4}px`;
-      
+
       // Ensure tooltip stays within viewport
       requestAnimationFrame(() => {
         const tooltipRect = tooltip.getBoundingClientRect();
@@ -3204,10 +3275,10 @@ function setupInfoTooltips() {
           tooltip.style.top = `${window.innerHeight - tooltipRect.height - 16}px`;
         }
       });
-      
+
       tooltip.classList.add('visible');
     });
-    
+
     icon.addEventListener('mouseleave', () => {
       tooltip.classList.remove('visible');
     });
