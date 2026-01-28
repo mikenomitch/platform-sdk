@@ -1,31 +1,34 @@
 /**
  * Platforms SDK Playground
- * 
- * A playground to test the Platforms SDK with a nice UI.
- * Shows all three layers of the SDK in action.
  */
 
-import { Platform, buildWorker, type TenantConfig } from 'platforms-sdk';
+import { WorkerEntrypoint, exports } from 'cloudflare:workers';
+import { Platform, buildWorker } from 'platforms-sdk';
 
 interface Env {
   LOADER: import('platforms-sdk').WorkerLoader;
   TENANTS: KVNamespace;
+  WORKERS: KVNamespace;
   ASSETS: Fetcher;
+}
+
+/**
+ * Outbound handler - intercepts all fetch() calls from tenant workers
+ */
+export class OutboundHandler extends WorkerEntrypoint {
+  async fetch(request: Request) {
+    console.log(`[Outbound] ${request.method} ${request.url}`);
+    return fetch(request);
+  }
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    const platform = Platform.fromEnv(env);
 
     // API Routes
     if (url.pathname.startsWith('/api/')) {
-      return handleAPI(request, url, platform, env);
-    }
-
-    // Tenant routing: /tenant/:id/*
-    if (url.pathname.startsWith('/tenant/')) {
-      return handleTenantRoute(request, url, platform);
+      return handleAPI(request, url, env);
     }
 
     // Serve static assets
@@ -33,66 +36,80 @@ export default {
   },
 };
 
-async function handleAPI(
-  request: Request,
-  url: URL,
-  platform: Platform,
-  env: Env
-): Promise<Response> {
+async function handleAPI(request: Request, url: URL, env: Env): Promise<Response> {
   const path = url.pathname.replace('/api', '');
 
+  // Create platform
+  const platform = Platform.create({
+    loader: env.LOADER,
+    tenantsKV: env.TENANTS,
+    workersKV: env.WORKERS,
+    // outbound: exports.OutboundHandler(), // Uncomment to enable outbound interception
+  });
+
   try {
-    // POST /api/build - Build worker code without saving (for playground)
-    if (path === '/build' && request.method === 'POST') {
-      const { files, options } = await request.json() as {
-        files: Record<string, string>;
-        options?: { bundle?: boolean; minify?: boolean };
-      };
+    // ─────────────────────────────────────────────────────────────────────────
+    // Playground endpoints (ephemeral, for testing)
+    // ─────────────────────────────────────────────────────────────────────────
 
-      const startTime = Date.now();
-      const result = await buildWorker(files, options);
-      const buildTime = Date.now() - startTime;
-
-      return json({
-        success: true,
-        mainModule: result.mainModule,
-        modules: Object.keys(result.modules),
-        warnings: result.warnings ?? [],
-        timing: { buildTime },
-      });
-    }
-
-    // POST /api/run - Build and run worker code (ephemeral, not saved)
+    // POST /api/run - Build and run code (ephemeral)
     if (path === '/run' && request.method === 'POST') {
-      const { files, options, testRequest } = await request.json() as {
+      const { files, options, tenantId } = await request.json() as {
         files: Record<string, string>;
         options?: { bundle?: boolean; minify?: boolean };
-        testRequest?: { method?: string; path?: string; headers?: Record<string, string>; body?: string };
+        tenantId?: string;
       };
 
       const buildStart = Date.now();
       const result = await buildWorker(files, options);
       const buildTime = Date.now() - buildStart;
 
-      // Create ephemeral worker
-      const workerName = `ephemeral-${Date.now()}`;
+      // If tenantId provided, use tenant defaults; otherwise create ephemeral
+      let worker;
       const loadStart = Date.now();
-      const worker = env.LOADER.get(workerName, async () => ({
+      
+      if (tenantId) {
+        // Ensure tenant exists, create if not
+        const tenant = await platform.getTenant(tenantId);
+        if (!tenant) {
+          await platform.createTenant({ id: tenantId });
+        }
+        
+        // Run with tenant defaults
+        const testReq = new Request('https://tenant.local/', { method: 'GET' });
+        const response = await platform.runEphemeral(tenantId, files, testReq, { build: options });
+        const loadTime = Date.now() - loadStart;
+        const responseBody = await response.text();
+
+        return json({
+          success: true,
+          buildInfo: {
+            mainModule: result.mainModule,
+            modules: Object.keys(result.modules),
+            warnings: result.warnings ?? [],
+          },
+          response: {
+            status: response.status,
+            headers: Object.fromEntries(response.headers),
+            body: responseBody,
+          },
+          timing: { buildTime, loadTime, runTime: 0, total: buildTime + loadTime },
+        });
+      }
+
+      // Ephemeral without tenant
+      const workerName = `ephemeral-${Date.now()}`;
+      worker = env.LOADER.get(workerName, async () => ({
         mainModule: result.mainModule,
         modules: result.modules as Record<string, string>,
-        compatibilityDate: '2026-01-01',
+        compatibilityDate: new Date().toISOString().split('T')[0],
         compatibilityFlags: [],
         env: { API_KEY: 'demo-key-12345', DEBUG: 'true' },
+        // globalOutbound: exports.OutboundHandler(), // Uncomment to enable
       }));
       const loadTime = Date.now() - loadStart;
 
-      // Execute the worker
-      const testReq = new Request(`https://tenant.local${testRequest?.path ?? '/'}`, {
-        method: testRequest?.method ?? 'GET',
-        headers: testRequest?.headers,
-        body: testRequest?.body,
-      });
-
+      const testReq = new Request('https://tenant.local/', { method: 'GET' });
       const runStart = Date.now();
       let response: Response;
       let responseBody: string;
@@ -101,7 +118,6 @@ async function handleAPI(
       try {
         response = await worker.getEntrypoint().fetch(testReq);
         responseBody = await response.text();
-
         if (response.status >= 500 && responseBody === 'Internal Server Error') {
           workerError = { message: 'Worker threw an uncaught exception' };
         }
@@ -115,9 +131,6 @@ async function handleAPI(
       }
       const runTime = Date.now() - runStart;
 
-      const headers: Record<string, string> = {};
-      response.headers.forEach((v, k) => { headers[k] = v; });
-
       return json({
         success: !workerError,
         buildInfo: {
@@ -125,13 +138,21 @@ async function handleAPI(
           modules: Object.keys(result.modules),
           warnings: result.warnings ?? [],
         },
-        response: { status: response.status, headers, body: responseBody },
+        response: {
+          status: response.status,
+          headers: Object.fromEntries(response.headers),
+          body: responseBody,
+        },
         workerError,
         timing: { buildTime, loadTime, runTime, total: buildTime + loadTime + runTime },
       });
     }
 
-    // GET /api/tenants - List tenants
+    // ─────────────────────────────────────────────────────────────────────────
+    // Tenant CRUD
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // GET /api/tenants
     if (path === '/tenants' && request.method === 'GET') {
       const result = await platform.listTenants({
         limit: 50,
@@ -140,39 +161,84 @@ async function handleAPI(
       return json(result);
     }
 
-    // POST /api/tenants - Create tenant
+    // POST /api/tenants
     if (path === '/tenants' && request.method === 'POST') {
-      const config = await request.json() as TenantConfig;
+      const config = await request.json() as import('platforms-sdk').TenantConfig;
       const metadata = await platform.createTenant(config);
       return json({ success: true, metadata }, 201);
     }
 
-    // GET /api/tenants/:id - Get tenant
+    // Tenant by ID routes
     const tenantMatch = path.match(/^\/tenants\/([^/]+)$/);
-    if (tenantMatch && request.method === 'GET') {
-      const record = await platform.getTenant(tenantMatch[1]);
-      if (!record) {
-        return json({ error: 'Tenant not found' }, 404);
+    if (tenantMatch) {
+      const tenantId = tenantMatch[1];
+
+      if (request.method === 'GET') {
+        const record = await platform.getTenant(tenantId);
+        if (!record) return json({ error: 'Tenant not found' }, 404);
+        return json(record);
       }
-      return json(record);
+
+      if (request.method === 'PUT') {
+        const updates = await request.json() as Partial<import('platforms-sdk').TenantConfig>;
+        const metadata = await platform.updateTenant(tenantId, updates);
+        return json({ success: true, metadata });
+      }
+
+      if (request.method === 'DELETE') {
+        const deleted = await platform.deleteTenant(tenantId);
+        return json({ success: deleted });
+      }
     }
 
-    // PUT /api/tenants/:id - Update tenant
-    if (tenantMatch && request.method === 'PUT') {
-      const updates = await request.json() as Partial<TenantConfig>;
-      const metadata = await platform.updateTenant(tenantMatch[1], updates);
-      return json({ success: true, metadata });
+    // ─────────────────────────────────────────────────────────────────────────
+    // Worker CRUD
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // GET /api/tenants/:id/workers
+    const workersMatch = path.match(/^\/tenants\/([^/]+)\/workers$/);
+    if (workersMatch && request.method === 'GET') {
+      const result = await platform.listWorkers(workersMatch[1], {
+        limit: 50,
+        cursor: url.searchParams.get('cursor') ?? undefined,
+      });
+      return json(result);
     }
 
-    // DELETE /api/tenants/:id - Delete tenant
-    if (tenantMatch && request.method === 'DELETE') {
-      const deleted = await platform.deleteTenant(tenantMatch[1]);
-      return json({ success: deleted });
+    // POST /api/tenants/:id/workers
+    if (workersMatch && request.method === 'POST') {
+      const config = await request.json() as Omit<import('platforms-sdk').WorkerConfig, 'tenantId'>;
+      const metadata = await platform.createWorker(workersMatch[1], config);
+      return json({ success: true, metadata }, 201);
     }
 
-    // POST /api/tenants/:id/execute - Execute tenant worker
-    const executeMatch = path.match(/^\/tenants\/([^/]+)\/execute$/);
-    if (executeMatch && request.method === 'POST') {
+    // Worker by ID routes
+    const workerMatch = path.match(/^\/tenants\/([^/]+)\/workers\/([^/]+)$/);
+    if (workerMatch) {
+      const [, tenantId, workerId] = workerMatch;
+
+      if (request.method === 'GET') {
+        const record = await platform.getWorker(tenantId, workerId);
+        if (!record) return json({ error: 'Worker not found' }, 404);
+        return json(record);
+      }
+
+      if (request.method === 'PUT') {
+        const updates = await request.json() as Partial<import('platforms-sdk').WorkerConfig>;
+        const metadata = await platform.updateWorker(tenantId, workerId, updates);
+        return json({ success: true, metadata });
+      }
+
+      if (request.method === 'DELETE') {
+        const deleted = await platform.deleteWorker(tenantId, workerId);
+        return json({ success: deleted });
+      }
+    }
+
+    // POST /api/tenants/:id/workers/:workerId/fetch - Execute worker
+    const fetchMatch = path.match(/^\/tenants\/([^/]+)\/workers\/([^/]+)\/fetch$/);
+    if (fetchMatch && request.method === 'POST') {
+      const [, tenantId, workerId] = fetchMatch;
       const { method, path: reqPath, headers, body } = await request.json() as {
         method?: string;
         path?: string;
@@ -180,19 +246,16 @@ async function handleAPI(
         body?: string;
       };
 
-      const response = await platform.execute(executeMatch[1], {
-        method,
-        path: reqPath,
+      const testReq = new Request(`https://worker.local${reqPath ?? '/'}`, {
+        method: method ?? 'GET',
         headers,
         body,
       });
 
-      const responseHeaders: Record<string, string> = {};
-      response.headers.forEach((v, k) => { responseHeaders[k] = v; });
-
+      const response = await platform.fetch(tenantId, workerId, testReq);
       return json({
         status: response.status,
-        headers: responseHeaders,
+        headers: Object.fromEntries(response.headers),
         body: await response.text(),
       });
     }
@@ -204,35 +267,6 @@ async function handleAPI(
       error: err instanceof Error ? err.message : 'Unknown error',
       stack: err instanceof Error ? err.stack : undefined,
     }, 500);
-  }
-}
-
-async function handleTenantRoute(
-  request: Request,
-  url: URL,
-  platform: Platform
-): Promise<Response> {
-  // Extract tenant ID from path: /tenant/:id/...
-  const match = url.pathname.match(/^\/tenant\/([^/]+)(\/.*)?$/);
-  if (!match) {
-    return json({ error: 'Invalid tenant route' }, 400);
-  }
-
-  const tenantId = match[1];
-  const path = match[2] ?? '/';
-
-  // Rewrite request to remove tenant prefix
-  const tenantUrl = new URL(request.url);
-  tenantUrl.pathname = path;
-  const tenantRequest = new Request(tenantUrl.toString(), request);
-
-  try {
-    return await platform.routeRequest(tenantId, tenantRequest);
-  } catch (err) {
-    if (err instanceof Error && err.message.includes('not found')) {
-      return json({ error: 'Tenant not found' }, 404);
-    }
-    throw err;
   }
 }
 

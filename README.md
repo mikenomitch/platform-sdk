@@ -4,14 +4,16 @@ Build platforms on Cloudflare Workers using [Dynamic Workers](https://developers
 
 ## Why Dynamic Workers?
 
-Workers for Platforms (WFP) provides a managed experience, but sometimes you need more control. Dynamic Workers give you:
+Workers for Platforms (WFP) provides a managed experience, but sometimes you need more control:
 
-- **Full control** - No wrappers, no abstractions you can't see through
-- **Local dev works** - `wrangler dev` just works
-- **Your API** - Build the exact API surface your customers need
+- **Full control** - No wrappers, your API surface
 - **Escape hatches** - Need smart placement? OTEL? Custom billing? Just do it.
 
-This SDK follows an "onion" architecture: start with the managed layer for the 80% case, unwrap layers when you need control.
+## Model
+
+- **Tenants** define defaults (env, compat date, flags)
+- **Workers** belong to tenants and inherit those defaults
+- Multiple workers per tenant, each independently versioned
 
 ## Quick Start
 
@@ -24,23 +26,37 @@ import { Platform } from 'platforms-sdk';
 
 export default {
   async fetch(request: Request, env: Env) {
-    const platform = Platform.fromEnv(env);
-    
-    // Create a tenant worker
-    await platform.createTenant({
-      id: 'my-tenant',
-      files: {
-        'src/index.ts': `export default { fetch: () => new Response('Hello!') }`,
-      },
+    const platform = Platform.create({
+      loader: env.LOADER,
+      tenantsKV: env.TENANTS,
+      workersKV: env.WORKERS,
     });
-    
-    // Route requests to tenant
-    return platform.routeRequest('my-tenant', request);
+
+    // Create a tenant with defaults
+    await platform.createTenant({
+      id: 'acme-corp',
+      env: { API_BASE: 'https://api.acme.com' },
+    });
+
+    // Create workers (inherit tenant defaults)
+    await platform.createWorker('acme-corp', {
+      id: 'api-handler',
+      files: { 'src/index.ts': '...' },
+    });
+
+    await platform.createWorker('acme-corp', {
+      id: 'webhook-processor',
+      files: { 'src/index.ts': '...' },
+      env: { WEBHOOK_SECRET: '...' }, // merged with tenant env
+    });
+
+    // Execute
+    return platform.fetch('acme-corp', 'api-handler', request);
   }
 }
 ```
 
-Configure your `wrangler.toml`:
+Configure `wrangler.toml`:
 
 ```toml
 [[worker_loaders]]
@@ -48,155 +64,137 @@ binding = "LOADER"
 
 [[kv_namespaces]]
 binding = "TENANTS"
-id = "your-kv-id"
+id = "your-tenants-kv"
+
+[[kv_namespaces]]
+binding = "WORKERS"
+id = "your-workers-kv"
 ```
 
 ## Architecture
 
-The SDK has three layers. Start at the top, unwrap when needed:
+Three layers, unwrap when needed:
 
 ```
 ┌─────────────────────────────────────────────────────┐
 │  Platform (managed)                                 │
-│  - Automatic storage + versioning                   │
-│  - CRUD operations for tenants                      │
-│  - Built-in routing                                 │
+│  - Tenant + Worker CRUD                             │
+│  - Automatic env inheritance                        │
+│  - Versioning and caching                           │
 ├─────────────────────────────────────────────────────┤
 │  Storage (customizable)                             │
 │  - KV, R2, D1, external DB                          │
-│  - Implement TenantStorage interface                │
+│  - Implement TenantStorage/WorkerStorage            │
 ├─────────────────────────────────────────────────────┤
-│  Core (bare metal)                                  │
+│  Core (primitives)                                  │
 │  - buildWorker() - bundle source files              │
 │  - loadWorker() - use Worker Loader directly        │
-│  - Full control over everything                     │
 └─────────────────────────────────────────────────────┘
 ```
 
-### Layer 1: Platform (Managed)
+## API
 
-Use `Platform` for the common case:
+### Tenants
 
 ```ts
-const platform = Platform.fromEnv(env);
+// Create tenant with defaults
+await platform.createTenant({
+  id: 'acme',
+  env: { API_KEY: 'secret' },
+  compatibilityDate: '2024-12-01',
+});
 
-// CRUD operations
-await platform.createTenant({ id: 'user-123', files: {...} });
-await platform.updateTenant('user-123', { files: {...} });
-await platform.deleteTenant('user-123');
+// Update tenant (invalidates all worker caches)
+await platform.updateTenant('acme', { 
+  env: { API_KEY: 'new-secret' } 
+});
 
-// Execute
-const response = await platform.routeRequest('user-123', request);
+// Get/Delete/List
+await platform.getTenant('acme');
+await platform.deleteTenant('acme'); // also deletes all workers
+await platform.listTenants({ limit: 50 });
 ```
 
-### Layer 2: Storage (Customizable)
-
-Need custom storage? Implement `TenantStorage`:
+### Workers
 
 ```ts
-import { Platform, type TenantStorage } from 'platforms-sdk';
+// Create worker (inherits tenant defaults)
+await platform.createWorker('acme', {
+  id: 'main',
+  files: {
+    'src/index.ts': `export default { fetch: () => new Response('Hi') }`,
+    'package.json': '{"main":"src/index.ts"}',
+  },
+});
 
-class R2TenantStorage implements TenantStorage {
-  constructor(private bucket: R2Bucket) {}
-  
-  async get(tenantId: string) {
-    const obj = await this.bucket.get(`tenants/${tenantId}.json`);
-    return obj ? JSON.parse(await obj.text()) : null;
+// Create worker with overrides
+await platform.createWorker('acme', {
+  id: 'special',
+  files: { ... },
+  env: { OVERRIDE: 'value' }, // merged with tenant env
+  compatibilityFlags: ['nodejs_compat'],
+});
+
+// Update worker (bumps version)
+await platform.updateWorker('acme', 'main', { 
+  files: { ... } 
+});
+
+// Get/Delete/List
+await platform.getWorker('acme', 'main');
+await platform.deleteWorker('acme', 'main');
+await platform.listWorkers('acme');
+```
+
+### Execution
+
+```ts
+// Execute a worker
+const response = await platform.fetch('acme', 'main', request);
+
+// Run ephemeral code with tenant defaults (not persisted)
+const response = await platform.runEphemeral('acme', files, request);
+```
+
+## Core Layer
+
+For full control, use core functions directly:
+
+```ts
+import { buildWorker, loadWorker, invokeWorker } from 'platforms-sdk/core';
+
+// Build
+const { mainModule, modules } = await buildWorker(files, { minify: true });
+
+// Load
+const worker = loadWorker(env.LOADER, {
+  name: 'my-worker',
+  mainModule,
+  modules,
+  env: { SECRET: 'value' },
+});
+
+// Execute
+const response = await invokeWorker(worker, request);
+```
+
+## Outbound Interception
+
+Intercept all `fetch()` calls from tenant workers:
+
+```ts
+import { WorkerEntrypoint, exports } from 'cloudflare:workers';
+
+export class OutboundHandler extends WorkerEntrypoint {
+  async fetch(request: Request) {
+    console.log(`Outbound: ${request.method} ${request.url}`);
+    return fetch(request);
   }
-  
-  async put(tenantId: string, record: TenantRecord) {
-    await this.bucket.put(`tenants/${tenantId}.json`, JSON.stringify(record));
-  }
-  
-  // ... implement delete, list
 }
 
 const platform = Platform.create({
   loader: env.LOADER,
-  storage: new R2TenantStorage(env.BUCKET),
-});
-```
-
-### Layer 3: Core (Bare Metal)
-
-Maximum control with core functions:
-
-```ts
-import { buildWorker, loadWorker } from 'platforms-sdk/core';
-
-// Build worker from source files
-const { mainModule, modules } = await buildWorker(files, {
-  bundle: true,
-  minify: true,
-});
-
-// Load directly with Worker Loader
-const worker = env.LOADER.get('my-worker', async () => ({
-  mainModule,
-  modules,
-  compatibilityDate: '2026-01-01',
-  env: { API_KEY: 'secret' },
-}));
-
-// Execute
-const response = await worker.getEntrypoint().fetch(request);
-```
-
-## Examples
-
-### Multi-file Worker with Dependencies
-
-```ts
-await platform.createTenant({
-  id: 'api-service',
-  files: {
-    'src/index.ts': `
-      import { Hono } from 'hono';
-      import { cors } from 'hono/cors';
-      
-      const app = new Hono();
-      app.use('*', cors());
-      app.get('/', (c) => c.json({ status: 'ok' }));
-      
-      export default app;
-    `,
-    'package.json': JSON.stringify({
-      dependencies: { hono: '^4.0.0' }
-    }),
-  },
-});
-```
-
-### Custom Routing
-
-```ts
-export default {
-  async fetch(request: Request, env: Env) {
-    const platform = Platform.fromEnv(env);
-    const url = new URL(request.url);
-    
-    // Route by subdomain
-    const subdomain = url.hostname.split('.')[0];
-    
-    // Or route by path
-    const match = url.pathname.match(/^\/tenant\/([^\/]+)/);
-    const tenantId = match?.[1] ?? subdomain;
-    
-    return platform.routeRequest(tenantId, request);
-  }
-}
-```
-
-### Pass Environment to Tenants
-
-```ts
-await platform.createTenant({
-  id: 'my-tenant',
-  files: { ... },
-  env: {
-    DATABASE_URL: 'postgres://...',
-    API_KEY: tenantApiKey,
-  },
+  outbound: exports.OutboundHandler(),
 });
 ```
 
@@ -209,51 +207,7 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:8787 to see the playground.
-
-## API Reference
-
-### Platform
-
-| Method | Description |
-|--------|-------------|
-| `Platform.fromEnv(env)` | Create from environment bindings |
-| `Platform.create(options)` | Create with custom options |
-| `createTenant(config)` | Create a new tenant |
-| `updateTenant(id, updates)` | Update tenant (bumps version) |
-| `getTenant(id)` | Get tenant config + metadata |
-| `deleteTenant(id)` | Delete tenant |
-| `listTenants(options?)` | List tenants with pagination |
-| `routeRequest(id, request)` | Route request to tenant worker |
-| `execute(id, options?)` | Execute with custom request |
-
-### TenantConfig
-
-```ts
-interface TenantConfig {
-  id: string;                           // Unique identifier
-  files: Record<string, string>;        // Source files
-  env?: Record<string, string>;         // Environment variables
-  compatibilityDate?: string;           // Worker compat date
-  compatibilityFlags?: string[];        // Worker compat flags
-}
-```
-
-### Core Functions
-
-```ts
-// Build worker from source files
-buildWorker(files, options?) → { mainModule, modules, warnings? }
-
-// Load worker with Worker Loader
-loadWorker(loader, name, factory) → WorkerStub
-
-// Build and load in one step  
-buildAndLoad(loader, name, config, options?) → WorkerStub
-
-// Invoke worker's fetch handler
-invokeWorker(worker, request, entrypoint?) → Response
-```
+Open http://localhost:8787
 
 ## License
 

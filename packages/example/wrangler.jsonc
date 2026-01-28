@@ -7,17 +7,21 @@
     "directory": "./public",
     "binding": "ASSETS"
   },
-  // Dynamic Worker Loader - this is the magic
+  // Dynamic Worker Loader
   "worker_loaders": [
     {
       "binding": "LOADER"
     }
   ],
-  // KV for tenant storage
+  // KV for storage
   "kv_namespaces": [
     {
       "binding": "TENANTS",
-      "id": "placeholder-id"
+      "id": "tenants-placeholder"
+    },
+    {
+      "binding": "WORKERS", 
+      "id": "workers-placeholder"
     }
   ],
   "observability": {

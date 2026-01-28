@@ -1,18 +1,23 @@
 /**
- * Storage layer - the first "unwrap point"
+ * Storage layer
  * 
  * Default: KV-based storage
- * Unwrap: Implement TenantStorage interface for custom storage (R2, D1, external DB, etc.)
+ * Customize: Implement TenantStorage/WorkerStorage interfaces
  */
 
-import type { TenantStorage, TenantRecord, TenantMetadata } from '../types.js';
+import type {
+  TenantStorage,
+  TenantRecord,
+  TenantMetadata,
+  WorkerStorage,
+  WorkerRecord,
+  WorkerMetadata,
+  HostnameStorage,
+  HostnameRoute,
+} from '../types.js';
 
 /**
- * KV-based storage implementation
- * 
- * This is the default storage layer. If you need custom storage:
- * 1. Implement the TenantStorage interface
- * 2. Pass your implementation to Platform.create()
+ * KV-based tenant storage
  */
 export class KVTenantStorage implements TenantStorage {
   constructor(private kv: KVNamespace) {}
@@ -27,7 +32,6 @@ export class KVTenantStorage implements TenantStorage {
       metadata: {
         id: record.metadata.id,
         updatedAt: record.metadata.updatedAt,
-        version: record.metadata.version,
       },
     });
   }
@@ -63,7 +67,81 @@ export class KVTenantStorage implements TenantStorage {
 }
 
 /**
- * In-memory storage for development/testing
+ * KV-based worker storage
+ */
+export class KVWorkerStorage implements WorkerStorage {
+  constructor(private kv: KVNamespace) {}
+
+  private key(tenantId: string, workerId: string): string {
+    return `worker:${tenantId}:${workerId}`;
+  }
+
+  async get(tenantId: string, workerId: string): Promise<WorkerRecord | null> {
+    const data = await this.kv.get(this.key(tenantId, workerId), 'json');
+    return data as WorkerRecord | null;
+  }
+
+  async put(tenantId: string, workerId: string, record: WorkerRecord): Promise<void> {
+    await this.kv.put(this.key(tenantId, workerId), JSON.stringify(record), {
+      metadata: {
+        id: record.metadata.id,
+        tenantId: record.metadata.tenantId,
+        updatedAt: record.metadata.updatedAt,
+        version: record.metadata.version,
+      },
+    });
+  }
+
+  async delete(tenantId: string, workerId: string): Promise<boolean> {
+    const exists = await this.get(tenantId, workerId);
+    if (!exists) return false;
+    await this.kv.delete(this.key(tenantId, workerId));
+    return true;
+  }
+
+  async list(tenantId: string, options?: { limit?: number; cursor?: string }): Promise<{
+    workers: WorkerMetadata[];
+    cursor?: string;
+  }> {
+    const prefix = `worker:${tenantId}:`;
+    const result = await this.kv.list({
+      prefix,
+      limit: options?.limit ?? 100,
+      cursor: options?.cursor,
+    });
+
+    const workers: WorkerMetadata[] = result.keys.map((key) => ({
+      id: key.name.replace(prefix, ''),
+      tenantId,
+      ...(key.metadata as Omit<WorkerMetadata, 'id' | 'tenantId'>),
+    }));
+
+    return {
+      workers,
+      cursor: result.list_complete ? undefined : result.cursor,
+    };
+  }
+
+  async deleteAll(tenantId: string): Promise<number> {
+    const prefix = `worker:${tenantId}:`;
+    let deleted = 0;
+    let cursor: string | undefined;
+
+    do {
+      const result = await this.kv.list({ prefix, cursor });
+      for (const key of result.keys) {
+        await this.kv.delete(key.name);
+        deleted++;
+      }
+      cursor = result.list_complete ? undefined : result.cursor;
+    } while (cursor);
+
+    return deleted;
+  }
+}
+
+/**
+ * In-memory tenant storage (for dev/testing)
  */
 export class MemoryTenantStorage implements TenantStorage {
   private store = new Map<string, TenantRecord>();
@@ -99,10 +177,149 @@ export class MemoryTenantStorage implements TenantStorage {
     };
   }
 
-  /** Clear all stored tenants (useful for testing) */
   clear(): void {
     this.store.clear();
   }
 }
 
-export type { TenantStorage, TenantRecord, TenantMetadata };
+/**
+ * In-memory worker storage (for dev/testing)
+ */
+export class MemoryWorkerStorage implements WorkerStorage {
+  private store = new Map<string, WorkerRecord>();
+
+  private key(tenantId: string, workerId: string): string {
+    return `${tenantId}:${workerId}`;
+  }
+
+  async get(tenantId: string, workerId: string): Promise<WorkerRecord | null> {
+    return this.store.get(this.key(tenantId, workerId)) ?? null;
+  }
+
+  async put(tenantId: string, workerId: string, record: WorkerRecord): Promise<void> {
+    this.store.set(this.key(tenantId, workerId), record);
+  }
+
+  async delete(tenantId: string, workerId: string): Promise<boolean> {
+    return this.store.delete(this.key(tenantId, workerId));
+  }
+
+  async list(tenantId: string, options?: { limit?: number; cursor?: string }): Promise<{
+    workers: WorkerMetadata[];
+    cursor?: string;
+  }> {
+    const prefix = `${tenantId}:`;
+    const entries = Array.from(this.store.entries())
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([, record]) => record.metadata);
+
+    const limit = options?.limit ?? 100;
+    const start = options?.cursor ? parseInt(options.cursor, 10) : 0;
+    const workers = entries.slice(start, start + limit);
+
+    return {
+      workers,
+      cursor: start + limit < entries.length ? String(start + limit) : undefined,
+    };
+  }
+
+  async deleteAll(tenantId: string): Promise<number> {
+    const prefix = `${tenantId}:`;
+    let deleted = 0;
+    for (const key of this.store.keys()) {
+      if (key.startsWith(prefix)) {
+        this.store.delete(key);
+        deleted++;
+      }
+    }
+    return deleted;
+  }
+
+  clear(): void {
+    this.store.clear();
+  }
+}
+
+/**
+ * KV-based hostname storage
+ */
+export class KVHostnameStorage implements HostnameStorage {
+  constructor(private kv: KVNamespace) {}
+
+  async get(hostname: string): Promise<HostnameRoute | null> {
+    const data = await this.kv.get(`hostname:${hostname}`, 'json');
+    return data as HostnameRoute | null;
+  }
+
+  async put(hostname: string, route: HostnameRoute): Promise<void> {
+    // Store hostname → route mapping
+    await this.kv.put(`hostname:${hostname}`, JSON.stringify(route));
+    // Also store reverse index for listing by worker
+    await this.kv.put(`hostname-idx:${route.tenantId}:${route.workerId}:${hostname}`, '1');
+  }
+
+  async delete(hostname: string): Promise<boolean> {
+    const existing = await this.get(hostname);
+    if (!existing) return false;
+    await this.kv.delete(`hostname:${hostname}`);
+    await this.kv.delete(`hostname-idx:${existing.tenantId}:${existing.workerId}:${hostname}`);
+    return true;
+  }
+
+  async listByWorker(tenantId: string, workerId: string): Promise<string[]> {
+    const prefix = `hostname-idx:${tenantId}:${workerId}:`;
+    const result = await this.kv.list({ prefix });
+    return result.keys.map((key) => key.name.replace(prefix, ''));
+  }
+
+  async deleteByWorker(tenantId: string, workerId: string): Promise<number> {
+    const hostnames = await this.listByWorker(tenantId, workerId);
+    for (const hostname of hostnames) {
+      await this.delete(hostname);
+    }
+    return hostnames.length;
+  }
+}
+
+/**
+ * In-memory hostname storage (for dev/testing)
+ */
+export class MemoryHostnameStorage implements HostnameStorage {
+  private routes = new Map<string, HostnameRoute>();
+
+  async get(hostname: string): Promise<HostnameRoute | null> {
+    return this.routes.get(hostname) ?? null;
+  }
+
+  async put(hostname: string, route: HostnameRoute): Promise<void> {
+    this.routes.set(hostname, route);
+  }
+
+  async delete(hostname: string): Promise<boolean> {
+    return this.routes.delete(hostname);
+  }
+
+  async listByWorker(tenantId: string, workerId: string): Promise<string[]> {
+    const hostnames: string[] = [];
+    for (const [hostname, route] of this.routes) {
+      if (route.tenantId === tenantId && route.workerId === workerId) {
+        hostnames.push(hostname);
+      }
+    }
+    return hostnames;
+  }
+
+  async deleteByWorker(tenantId: string, workerId: string): Promise<number> {
+    const hostnames = await this.listByWorker(tenantId, workerId);
+    for (const hostname of hostnames) {
+      this.routes.delete(hostname);
+    }
+    return hostnames.length;
+  }
+
+  clear(): void {
+    this.routes.clear();
+  }
+}
+
+export type { TenantStorage, TenantRecord, TenantMetadata, WorkerStorage, WorkerRecord, WorkerMetadata, HostnameStorage, HostnameRoute };

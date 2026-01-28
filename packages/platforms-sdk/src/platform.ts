@@ -1,108 +1,168 @@
 /**
  * Platform - the high-level managed layer
  * 
- * This is the "fully managed" experience. Use Platform when you want:
- * - Automatic tenant storage and versioning
- * - Simple CRUD operations for tenant workers
- * - Built-in routing and execution
- * 
- * Need more control? Unwrap to lower layers:
- * - platform.storage -> Access the storage layer directly
- * - platform.loader -> Access the Worker Loader directly
- * - Use core/* functions for bare-metal control
+ * Tenants define defaults. Workers belong to tenants and inherit those defaults.
+ * Multiple workers per tenant, each independently versioned and trackable.
  */
 
-import { buildWorker, invokeWorker } from './core/index.js';
-import { KVTenantStorage, MemoryTenantStorage } from './storage/index.js';
+import { buildWorker } from './core/index.js';
+import {
+  KVTenantStorage,
+  KVWorkerStorage,
+  KVHostnameStorage,
+  MemoryTenantStorage,
+  MemoryWorkerStorage,
+  MemoryHostnameStorage,
+} from './storage/index.js';
 import type {
+  Files,
   TenantConfig,
   TenantMetadata,
   TenantRecord,
   TenantStorage,
-  TenantOptions,
+  WorkerConfig,
+  WorkerMetadata,
+  WorkerRecord,
+  WorkerStorage,
+  WorkerOptions,
   WorkerLoader,
   WorkerStub,
+  WorkerDefaults,
+  WorkerLimits,
+  TailWorker,
+  HostnameStorage,
+  HostnameRoute,
   PlatformEnv,
 } from './types.js';
 
 export interface PlatformOptions {
   /** Worker Loader binding */
   loader: WorkerLoader;
-  /** Custom storage implementation (defaults to KV or memory) */
-  storage?: TenantStorage;
-  /** KV namespace for default storage */
-  kv?: KVNamespace;
-  /** Default compatibility date for tenant workers */
-  defaultCompatibilityDate?: string;
-  /** Default compatibility flags for tenant workers */
-  defaultCompatibilityFlags?: string[];
+  /** Tenant storage (defaults to KV or memory) */
+  tenantStorage?: TenantStorage;
+  /** Worker storage (defaults to KV or memory) */
+  workerStorage?: WorkerStorage;
+  /** Hostname storage (defaults to KV or memory) */
+  hostnameStorage?: HostnameStorage;
+  /** KV namespace for tenant storage */
+  tenantsKV?: KVNamespace;
+  /** KV namespace for worker storage */
+  workersKV?: KVNamespace;
+  /** KV namespace for hostname routing */
+  hostnamesKV?: KVNamespace;
+  /** 
+   * Global defaults applied to all workers.
+   * Inheritance: defaults → tenant config → worker config
+   */
+  defaults?: WorkerDefaults;
+  /** Global outbound worker - intercepts all fetch() calls */
+  outbound?: Fetcher;
 }
 
 /**
- * Platform SDK - managed layer for building platforms
+ * Platform SDK
  * 
  * @example
  * ```ts
- * // Create platform with KV storage
  * const platform = Platform.create({
  *   loader: env.LOADER,
- *   kv: env.TENANTS,
+ *   tenantsKV: env.TENANTS,
+ *   workersKV: env.WORKERS,
  * });
  * 
- * // Create a tenant
+ * // Create a tenant with defaults
  * await platform.createTenant({
- *   id: 'user-123',
- *   files: {
- *     'src/index.ts': `export default { fetch: () => new Response('Hello!') }`,
- *   },
+ *   id: 'acme-corp',
+ *   env: { API_BASE: 'https://api.acme.com' },
  * });
  * 
- * // Route a request to the tenant
- * const response = await platform.routeRequest('user-123', request);
+ * // Create workers for the tenant (inherits tenant defaults)
+ * await platform.createWorker('acme-corp', {
+ *   id: 'api-handler',
+ *   files: { 'src/index.ts': '...' },
+ * });
+ * 
+ * await platform.createWorker('acme-corp', {
+ *   id: 'webhook-processor',
+ *   files: { 'src/index.ts': '...' },
+ *   env: { WEBHOOK_SECRET: '...' }, // merged with tenant env
+ * });
+ * 
+ * // Route requests
+ * return platform.fetch('acme-corp', 'api-handler', request);
  * ```
  */
 export class Platform {
-  /** Storage layer - unwrap for custom storage operations */
-  public readonly storage: TenantStorage;
-  /** Worker Loader - unwrap for direct loader access */
+  public readonly tenants: TenantStorage;
+  public readonly workers: WorkerStorage;
+  public readonly hostnames: HostnameStorage;
   public readonly loader: WorkerLoader;
 
-  private readonly defaultCompatibilityDate: string;
-  private readonly defaultCompatibilityFlags: string[];
-  private readonly workerCache = new Map<string, { version: number; stub: WorkerStub }>();
+  private readonly defaults: WorkerDefaults;
+  private readonly outbound?: Fetcher;
+  private readonly stubCache = new Map<string, { version: number; stub: WorkerStub }>();
 
   private constructor(options: PlatformOptions) {
     this.loader = options.loader;
-    this.storage = options.storage ?? (options.kv ? new KVTenantStorage(options.kv) : new MemoryTenantStorage());
-    this.defaultCompatibilityDate = options.defaultCompatibilityDate ?? '2026-01-01';
-    this.defaultCompatibilityFlags = options.defaultCompatibilityFlags ?? [];
+    
+    // Initialize tenant storage
+    if (options.tenantStorage) {
+      this.tenants = options.tenantStorage;
+    } else if (options.tenantsKV) {
+      this.tenants = new KVTenantStorage(options.tenantsKV);
+    } else {
+      this.tenants = new MemoryTenantStorage();
+    }
+
+    // Initialize worker storage
+    if (options.workerStorage) {
+      this.workers = options.workerStorage;
+    } else if (options.workersKV) {
+      this.workers = new KVWorkerStorage(options.workersKV);
+    } else {
+      this.workers = new MemoryWorkerStorage();
+    }
+
+    // Initialize hostname storage
+    if (options.hostnameStorage) {
+      this.hostnames = options.hostnameStorage;
+    } else if (options.hostnamesKV) {
+      this.hostnames = new KVHostnameStorage(options.hostnamesKV);
+    } else {
+      this.hostnames = new MemoryHostnameStorage();
+    }
+
+    // Global defaults (fallback values)
+    this.defaults = {
+      env: options.defaults?.env ?? {},
+      compatibilityDate: options.defaults?.compatibilityDate ?? '2024-12-01',
+      compatibilityFlags: options.defaults?.compatibilityFlags ?? [],
+      limits: options.defaults?.limits,
+      tails: options.defaults?.tails ?? [],
+    };
+    this.outbound = options.outbound;
   }
 
-  /**
-   * Create a Platform instance
-   */
   static create(options: PlatformOptions): Platform {
     return new Platform(options);
   }
 
-  /**
-   * Create a Platform from environment bindings
-   * Convenience method for common setup
-   */
   static fromEnv(env: PlatformEnv): Platform {
     return new Platform({
       loader: env.LOADER,
-      kv: env.TENANTS,
+      tenantsKV: env.TENANTS,
+      workersKV: env.WORKERS,
     });
   }
 
-  /**
-   * Create a new tenant
-   */
-  async createTenant(config: TenantConfig, options?: TenantOptions): Promise<TenantMetadata> {
-    const existing = await this.storage.get(config.id);
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Tenant Operations
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  async createTenant(config: TenantConfig): Promise<TenantMetadata> {
+    const existing = await this.tenants.get(config.id);
     if (existing) {
-      throw new Error(`Tenant "${config.id}" already exists. Use updateTenant() instead.`);
+      throw new Error(`Tenant "${config.id}" already exists`);
     }
 
     const now = new Date().toISOString();
@@ -110,149 +170,456 @@ export class Platform {
       id: config.id,
       createdAt: now,
       updatedAt: now,
-      version: 1,
     };
+
+    await this.tenants.put(config.id, { metadata, config });
+    return metadata;
+  }
+
+  async updateTenant(tenantId: string, updates: Partial<Omit<TenantConfig, 'id'>>): Promise<TenantMetadata> {
+    const existing = await this.tenants.get(tenantId);
+    if (!existing) {
+      throw new Error(`Tenant "${tenantId}" not found`);
+    }
+
+    const config: TenantConfig = { ...existing.config, ...updates, id: tenantId };
+    const metadata: TenantMetadata = {
+      ...existing.metadata,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await this.tenants.put(tenantId, { metadata, config });
+    
+    // Invalidate all cached workers for this tenant
+    for (const key of this.stubCache.keys()) {
+      if (key.startsWith(`${tenantId}:`)) {
+        this.stubCache.delete(key);
+      }
+    }
+
+    return metadata;
+  }
+
+  async getTenant(tenantId: string): Promise<TenantRecord | null> {
+    return this.tenants.get(tenantId);
+  }
+
+  async deleteTenant(tenantId: string): Promise<boolean> {
+    // Delete all workers first
+    await this.workers.deleteAll(tenantId);
+    
+    // Invalidate cache
+    for (const key of this.stubCache.keys()) {
+      if (key.startsWith(`${tenantId}:`)) {
+        this.stubCache.delete(key);
+      }
+    }
+
+    return this.tenants.delete(tenantId);
+  }
+
+  async listTenants(options?: { prefix?: string; limit?: number; cursor?: string }) {
+    return this.tenants.list(options);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Worker Operations
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Create a new worker for a tenant
+   */
+  async createWorker(
+    tenantId: string,
+    config: Omit<WorkerConfig, 'tenantId'>,
+    options?: WorkerOptions
+  ): Promise<WorkerMetadata> {
+    // Verify tenant exists
+    const tenant = await this.tenants.get(tenantId);
+    if (!tenant) {
+      throw new Error(`Tenant "${tenantId}" not found`);
+    }
+
+    const existing = await this.workers.get(tenantId, config.id);
+    if (existing) {
+      throw new Error(`Worker "${config.id}" already exists for tenant "${tenantId}"`);
+    }
 
     // Validate the worker compiles
     await buildWorker(config.files, options?.build);
 
-    const record: TenantRecord = { metadata, config };
-    await this.storage.put(config.id, record);
+    const now = new Date().toISOString();
+    const metadata: WorkerMetadata = {
+      id: config.id,
+      tenantId,
+      createdAt: now,
+      updatedAt: now,
+      version: 1,
+    };
+
+    const fullConfig: WorkerConfig = { ...config, tenantId };
+    await this.workers.put(tenantId, config.id, { metadata, config: fullConfig });
+
+    // Register hostnames if provided
+    if (config.hostnames?.length) {
+      await this.addHostnames(tenantId, config.id, config.hostnames);
+    }
 
     return metadata;
   }
 
   /**
-   * Update an existing tenant
-   * Returns the new version number
+   * Update an existing worker
    */
-  async updateTenant(
+  async updateWorker(
     tenantId: string,
-    updates: Partial<Omit<TenantConfig, 'id'>>,
-    options?: TenantOptions
-  ): Promise<TenantMetadata> {
-    const existing = await this.storage.get(tenantId);
+    workerId: string,
+    updates: Partial<Omit<WorkerConfig, 'id' | 'tenantId'>>,
+    options?: WorkerOptions
+  ): Promise<WorkerMetadata> {
+    const existing = await this.workers.get(tenantId, workerId);
     if (!existing) {
-      throw new Error(`Tenant "${tenantId}" not found`);
+      throw new Error(`Worker "${workerId}" not found for tenant "${tenantId}"`);
     }
 
-    const config: TenantConfig = {
+    const config: WorkerConfig = {
       ...existing.config,
       ...updates,
-      id: tenantId,
+      id: workerId,
+      tenantId,
     };
 
     // Validate the worker compiles
     await buildWorker(config.files, options?.build);
 
-    const metadata: TenantMetadata = {
+    const metadata: WorkerMetadata = {
       ...existing.metadata,
       updatedAt: new Date().toISOString(),
       version: existing.metadata.version + 1,
     };
 
-    const record: TenantRecord = { metadata, config };
-    await this.storage.put(tenantId, record);
+    await this.workers.put(tenantId, workerId, { metadata, config });
 
-    // Invalidate cached worker
-    this.workerCache.delete(tenantId);
+    // Invalidate cache
+    this.stubCache.delete(`${tenantId}:${workerId}`);
 
     return metadata;
   }
 
   /**
-   * Get a tenant's configuration
+   * Get a worker's configuration
    */
-  async getTenant(tenantId: string): Promise<TenantRecord | null> {
-    return this.storage.get(tenantId);
+  async getWorker(tenantId: string, workerId: string): Promise<WorkerRecord | null> {
+    return this.workers.get(tenantId, workerId);
   }
 
   /**
-   * Delete a tenant
+   * Delete a worker
    */
-  async deleteTenant(tenantId: string): Promise<boolean> {
-    this.workerCache.delete(tenantId);
-    return this.storage.delete(tenantId);
+  async deleteWorker(tenantId: string, workerId: string): Promise<boolean> {
+    this.stubCache.delete(`${tenantId}:${workerId}`);
+    // Delete associated hostnames
+    await this.hostnames.deleteByWorker(tenantId, workerId);
+    return this.workers.delete(tenantId, workerId);
   }
 
   /**
-   * List tenants
+   * List all workers for a tenant
    */
-  async listTenants(options?: { prefix?: string; limit?: number; cursor?: string }) {
-    return this.storage.list(options);
+  async listWorkers(tenantId: string, options?: { limit?: number; cursor?: string }) {
+    return this.workers.list(tenantId, options);
   }
 
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Hostname Routing
+  // ─────────────────────────────────────────────────────────────────────────────
+
   /**
-   * Get or create a worker stub for a tenant
-   * Workers are cached and reused until the tenant is updated
+   * Add hostnames to a worker
    */
-  async getWorker(tenantId: string, options?: TenantOptions): Promise<WorkerStub> {
-    const record = await this.storage.get(tenantId);
-    if (!record) {
-      throw new Error(`Tenant "${tenantId}" not found`);
+  async addHostnames(tenantId: string, workerId: string, hostnames: string[]): Promise<void> {
+    // Verify worker exists
+    const worker = await this.workers.get(tenantId, workerId);
+    if (!worker) {
+      throw new Error(`Worker "${workerId}" not found for tenant "${tenantId}"`);
     }
 
-    // Check if we have a cached worker at the current version
-    const cached = this.workerCache.get(tenantId);
-    if (cached && cached.version === record.metadata.version) {
+    for (const hostname of hostnames) {
+      // Check if hostname is already assigned to another worker
+      const existing = await this.hostnames.get(hostname);
+      if (existing && (existing.tenantId !== tenantId || existing.workerId !== workerId)) {
+        throw new Error(`Hostname "${hostname}" is already assigned to ${existing.tenantId}/${existing.workerId}`);
+      }
+      
+      await this.hostnames.put(hostname, { hostname, tenantId, workerId });
+    }
+
+    // Update worker config to include hostnames
+    const currentHostnames = worker.config.hostnames ?? [];
+    const newHostnames = [...new Set([...currentHostnames, ...hostnames])];
+    if (newHostnames.length !== currentHostnames.length) {
+      await this.workers.put(tenantId, workerId, {
+        ...worker,
+        config: { ...worker.config, hostnames: newHostnames },
+      });
+    }
+  }
+
+  /**
+   * Remove hostnames from a worker
+   */
+  async removeHostnames(tenantId: string, workerId: string, hostnames: string[]): Promise<void> {
+    const worker = await this.workers.get(tenantId, workerId);
+    if (!worker) {
+      throw new Error(`Worker "${workerId}" not found for tenant "${tenantId}"`);
+    }
+
+    for (const hostname of hostnames) {
+      await this.hostnames.delete(hostname);
+    }
+
+    // Update worker config to remove hostnames
+    const currentHostnames = worker.config.hostnames ?? [];
+    const remainingHostnames = currentHostnames.filter((h) => !hostnames.includes(h));
+    if (remainingHostnames.length !== currentHostnames.length) {
+      await this.workers.put(tenantId, workerId, {
+        ...worker,
+        config: { ...worker.config, hostnames: remainingHostnames },
+      });
+    }
+  }
+
+  /**
+   * Get hostnames for a worker
+   */
+  async getHostnames(tenantId: string, workerId: string): Promise<string[]> {
+    return this.hostnames.listByWorker(tenantId, workerId);
+  }
+
+  /**
+   * Resolve a hostname to its worker route
+   */
+  async resolveHostname(hostname: string): Promise<HostnameRoute | null> {
+    return this.hostnames.get(hostname);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Execution
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Merge configuration from global defaults → tenant → worker
+   * Later values override earlier ones (except arrays which concatenate).
+   */
+  private mergeConfig(tenant: TenantRecord, worker: WorkerRecord): {
+    env: Record<string, string>;
+    compatibilityDate: string;
+    compatibilityFlags: string[];
+    limits?: WorkerLimits;
+    tails: TailWorker[];
+  } {
+    // Env: merge all three levels (global → tenant → worker)
+    const env = {
+      ...this.defaults.env,
+      ...tenant.config.env,
+      ...worker.config.env,
+    };
+
+    // Compat date: worker → tenant → global (first defined wins)
+    const compatibilityDate =
+      worker.config.compatibilityDate ??
+      tenant.config.compatibilityDate ??
+      this.defaults.compatibilityDate ??
+      '2024-12-01';
+
+    // Compat flags: concatenate all (dedupe)
+    const compatibilityFlags = [
+      ...new Set([
+        ...(this.defaults.compatibilityFlags ?? []),
+        ...(tenant.config.compatibilityFlags ?? []),
+        ...(worker.config.compatibilityFlags ?? []),
+      ]),
+    ];
+
+    // Limits: merge all three levels (global → tenant → worker)
+    const limits: WorkerLimits | undefined =
+      this.defaults.limits || tenant.config.limits || worker.config.limits
+        ? {
+            ...this.defaults.limits,
+            ...tenant.config.limits,
+            ...worker.config.limits,
+          }
+        : undefined;
+
+    // Tails: concatenate all levels (all tail workers receive events)
+    const tails: TailWorker[] = [
+      ...(this.defaults.tails ?? []),
+      ...(tenant.config.tails ?? []),
+      ...(worker.config.tails ?? []),
+    ];
+
+    return { env, compatibilityDate, compatibilityFlags, limits, tails };
+  }
+
+  /**
+   * Get or create a worker stub, merging global → tenant → worker config
+   */
+  async getStub(tenantId: string, workerId: string, options?: WorkerOptions): Promise<WorkerStub> {
+    const cacheKey = `${tenantId}:${workerId}`;
+    
+    const [tenant, worker] = await Promise.all([
+      this.tenants.get(tenantId),
+      this.workers.get(tenantId, workerId),
+    ]);
+
+    if (!tenant) {
+      throw new Error(`Tenant "${tenantId}" not found`);
+    }
+    if (!worker) {
+      throw new Error(`Worker "${workerId}" not found for tenant "${tenantId}"`);
+    }
+
+    // Check cache
+    const cached = this.stubCache.get(cacheKey);
+    if (cached && cached.version === worker.metadata.version) {
       return cached.stub;
     }
 
-    // Build and load the worker
-    const workerName = `tenant-${tenantId}-v${record.metadata.version}`;
-    const stub = this.loader.get(workerName, async () => {
-      const result = await buildWorker(record.config.files, options?.build);
+    // Merge: global defaults → tenant config → worker config
+    const merged = this.mergeConfig(tenant, worker);
+
+    // Build and load
+    const loaderName = `${tenantId}:${workerId}:v${worker.metadata.version}`;
+    const stub = this.loader.get(loaderName, async () => {
+      const result = await buildWorker(worker.config.files, options?.build);
       return {
         mainModule: result.mainModule,
         modules: result.modules as Record<string, string>,
-        compatibilityDate: record.config.compatibilityDate ?? this.defaultCompatibilityDate,
-        compatibilityFlags: record.config.compatibilityFlags ?? this.defaultCompatibilityFlags,
-        env: record.config.env ?? {},
+        compatibilityDate: merged.compatibilityDate,
+        compatibilityFlags: merged.compatibilityFlags,
+        env: merged.env,
+        limits: merged.limits,
+        globalOutbound: this.outbound ?? null,
+        tails: merged.tails,
       };
     });
 
-    // Cache the stub
-    this.workerCache.set(tenantId, { version: record.metadata.version, stub });
-
+    this.stubCache.set(cacheKey, { version: worker.metadata.version, stub });
     return stub;
   }
 
   /**
-   * Route a request to a tenant's worker
-   * 
-   * This is the main entry point for handling tenant requests.
+   * Execute a worker's fetch handler
    */
-  async routeRequest(
+  async fetch(
     tenantId: string,
+    workerId: string,
     request: Request,
-    options?: TenantOptions & { entrypoint?: string }
+    options?: WorkerOptions & { entrypoint?: string }
   ): Promise<Response> {
-    const worker = await this.getWorker(tenantId, options);
-    return invokeWorker(worker, request, options?.entrypoint);
+    const stub = await this.getStub(tenantId, workerId, options);
+    return stub.getEntrypoint(options?.entrypoint).fetch(request);
   }
 
   /**
-   * Execute a tenant worker with an ad-hoc request
+   * Route a request based on hostname
    * 
-   * Useful for testing or one-off executions.
+   * Looks up the hostname from the request and routes to the associated worker.
+   * Returns null if no worker is registered for the hostname.
+   * 
+   * @example
+   * ```ts
+   * const response = await platform.route(request);
+   * if (!response) {
+   *   return new Response('Not found', { status: 404 });
+   * }
+   * return response;
+   * ```
    */
-  async execute(
+  async route(request: Request, options?: WorkerOptions): Promise<Response | null> {
+    const url = new URL(request.url);
+    const route = await this.hostnames.get(url.hostname);
+    
+    if (!route) {
+      return null;
+    }
+
+    return this.fetch(route.tenantId, route.workerId, request, options);
+  }
+
+  /**
+   * Quick worker creation and execution (ephemeral, not persisted)
+   * 
+   * Creates a worker with global + tenant defaults but doesn't save it.
+   * Useful for one-off executions or testing.
+   */
+  async runEphemeral(
     tenantId: string,
-    options?: TenantOptions & {
-      method?: string;
-      path?: string;
-      headers?: Record<string, string>;
-      body?: string;
+    files: Files,
+    request: Request,
+    options?: WorkerOptions & { 
+      env?: Record<string, string>;
+      limits?: WorkerLimits;
     }
   ): Promise<Response> {
-    const request = new Request(`https://tenant.local${options?.path ?? '/'}`, {
-      method: options?.method ?? 'GET',
-      headers: options?.headers,
-      body: options?.body,
-    });
+    const tenant = await this.tenants.get(tenantId);
+    if (!tenant) {
+      throw new Error(`Tenant "${tenantId}" not found`);
+    }
 
-    return this.routeRequest(tenantId, request, options);
+    // Merge: global → tenant → options
+    const env = {
+      ...this.defaults.env,
+      ...tenant.config.env,
+      ...options?.env,
+    };
+
+    const compatibilityDate =
+      tenant.config.compatibilityDate ??
+      this.defaults.compatibilityDate ??
+      '2024-12-01';
+
+    const compatibilityFlags = [
+      ...new Set([
+        ...(this.defaults.compatibilityFlags ?? []),
+        ...(tenant.config.compatibilityFlags ?? []),
+      ]),
+    ];
+
+    const limits: WorkerLimits | undefined =
+      this.defaults.limits || tenant.config.limits || options?.limits
+        ? {
+            ...this.defaults.limits,
+            ...tenant.config.limits,
+            ...options?.limits,
+          }
+        : undefined;
+
+    // Tails: concatenate global + tenant (ephemeral workers don't have their own tails)
+    const tails: TailWorker[] = [
+      ...(this.defaults.tails ?? []),
+      ...(tenant.config.tails ?? []),
+    ];
+
+    const result = await buildWorker(files, options?.build);
+    const loaderName = `${tenantId}:ephemeral:${Date.now()}`;
+    
+    const stub = this.loader.get(loaderName, async () => ({
+      mainModule: result.mainModule,
+      modules: result.modules as Record<string, string>,
+      compatibilityDate,
+      compatibilityFlags,
+      env,
+      limits,
+      globalOutbound: this.outbound ?? null,
+      tails,
+    }));
+
+    return stub.getEntrypoint().fetch(request);
   }
 }
 
-export type { TenantConfig, TenantMetadata, TenantRecord, TenantStorage, TenantOptions };
+export type { TenantConfig, TenantMetadata, TenantRecord, TenantStorage };
+export type { WorkerConfig, WorkerMetadata, WorkerRecord, WorkerStorage, WorkerOptions };
+export type { WorkerDefaults, WorkerLimits };
+export type { HostnameStorage, HostnameRoute };
