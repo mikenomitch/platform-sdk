@@ -105,7 +105,7 @@ const platform = Platform.create({
   workersKV: env.WORKERS,
   defaults: {
     env: { ENVIRONMENT: 'production' },
-    compatibilityDate: '2024-12-01',
+    compatibilityDate: '2026-01-24',
     compatibilityFlags: ['nodejs_compat'],
     limits: { cpuMs: 50, subrequests: 50 },
   },

@@ -7,101 +7,226 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <div class="container">
-    <header>
-      <div class="logo">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-          <path d="M2 17l10 5 10-5"/>
-          <path d="M2 12l10 5 10-5"/>
-        </svg>
-        <div>
-          <h1>Platforms SDK</h1>
-          <p class="subtitle">Build platforms on Dynamic Workers</p>
-        </div>
-      </div>
-      <div class="header-actions">
-        <select id="examples" class="select">
-          <option value="">Load example...</option>
-          <option value="hello">Hello World</option>
-          <option value="api">JSON API</option>
-          <option value="router">Router</option>
-          <option value="env">Environment</option>
-          <option value="hono">Hono App</option>
-        </select>
-        <div class="status" id="status">
-          <span class="status-dot"></span>
-          <span>Ready</span>
-        </div>
-      </div>
-    </header>
-
-    <div class="main">
-      <!-- Editor -->
-      <section class="panel editor-panel">
-        <div class="panel-header">
-          <div class="tabs" id="tabs"></div>
-          <button class="btn-icon" id="addFile" title="Add file">+</button>
-        </div>
-        <div class="editor-container">
-          <textarea id="editor" spellcheck="false" placeholder="Select a file..."></textarea>
-        </div>
-        <div class="panel-footer">
-          <button class="btn primary" id="runBtn">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-              <polygon points="5 3 19 12 5 21"/>
-            </svg>
-            Run
-          </button>
-          <div class="options">
-            <label class="checkbox">
-              <input type="checkbox" id="bundleOpt" checked>
-              <span>Bundle</span>
-            </label>
-            <label class="checkbox">
-              <input type="checkbox" id="minifyOpt">
-              <span>Minify</span>
-            </label>
+  <div class="layout">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+            <path d="M2 17l10 5 10-5"/>
+            <path d="M2 12l10 5 10-5"/>
+          </svg>
+          <div>
+            <h1>Platforms SDK</h1>
+            <p class="subtitle">Dynamic Workers</p>
           </div>
         </div>
-      </section>
+      </div>
 
-      <!-- Output -->
-      <section class="panel output-panel">
-        <div class="panel-header">
-          <span class="panel-title">Output</span>
-        </div>
-        <div class="output" id="output">
-          <div class="empty">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <polygon points="5 3 19 12 5 21"/>
+      <div class="sidebar-content">
+        <!-- Platform Defaults -->
+        <section class="sidebar-section">
+          <div class="section-header" data-toggle="defaults">
+            <span>Platform Defaults</span>
+            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"/>
             </svg>
-            <p>Click Run to build and execute your worker</p>
+          </div>
+          <div class="section-body" id="defaultsSection">
+            <div class="defaults-grid" id="defaultsGrid">
+              <div class="loading">Loading...</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Tenants -->
+        <section class="sidebar-section">
+          <div class="section-header" data-toggle="tenants">
+            <span>Tenants</span>
+            <div class="section-actions">
+              <button class="btn-sm" id="addTenantBtn" title="Add tenant">+</button>
+              <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </div>
+          </div>
+          <div class="section-body" id="tenantsSection">
+            <div class="tenant-list" id="tenantList">
+              <div class="loading">Loading...</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Workers (shown when tenant selected) -->
+        <section class="sidebar-section" id="workersSection" style="display:none">
+          <div class="section-header" data-toggle="workers">
+            <span>Workers <span class="badge" id="selectedTenantBadge"></span></span>
+            <div class="section-actions">
+              <button class="btn-sm" id="addWorkerBtn" title="Add worker">+</button>
+              <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </div>
+          </div>
+          <div class="section-body">
+            <div class="worker-list" id="workerList">
+              <div class="empty-state">Select a tenant</div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div class="sidebar-footer">
+        <a href="https://github.com/cloudflare/workers-platforms-sdk" target="_blank" class="footer-link">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+          GitHub
+        </a>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <header class="main-header">
+        <div class="header-left">
+          <select id="examples" class="select">
+            <option value="">Load example...</option>
+            <option value="hello">Hello World</option>
+            <option value="api">JSON API</option>
+            <option value="router">Router</option>
+            <option value="env">Environment</option>
+          </select>
+          <span class="context-info" id="contextInfo"></span>
+        </div>
+        <div class="header-right">
+          <div class="status" id="status">
+            <span class="status-dot"></span>
+            <span>Ready</span>
           </div>
         </div>
-      </section>
-    </div>
+      </header>
 
-    <footer>
-      <a href="https://github.com/cloudflare/workers-platforms-sdk" target="_blank" class="footer-link">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
-        </svg>
-        View on GitHub
-      </a>
-      <span class="footer-sep">|</span>
-      <span class="footer-text">Built on <a href="https://developers.cloudflare.com/workers/runtime-apis/bindings/worker-loader/" target="_blank">Dynamic Workers</a></span>
-    </footer>
+      <div class="main-grid">
+        <!-- Editor -->
+        <section class="panel editor-panel">
+          <div class="panel-header">
+            <div class="tabs" id="tabs"></div>
+            <button class="btn-icon" id="addFile" title="Add file">+</button>
+          </div>
+          <div class="editor-container">
+            <textarea id="editor" spellcheck="false" placeholder="Select a file..."></textarea>
+          </div>
+          <div class="panel-footer">
+            <button class="btn primary" id="runBtn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                <polygon points="5 3 19 12 5 21"/>
+              </svg>
+              Run
+            </button>
+            <button class="btn secondary" id="saveWorkerBtn" style="display:none">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                <polyline points="17 21 17 13 7 13 7 21"/>
+                <polyline points="7 3 7 8 15 8"/>
+              </svg>
+              Save Worker
+            </button>
+            <div class="options">
+              <label class="checkbox">
+                <input type="checkbox" id="bundleOpt" checked>
+                <span>Bundle</span>
+              </label>
+              <label class="checkbox">
+                <input type="checkbox" id="minifyOpt">
+                <span>Minify</span>
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <!-- Output -->
+        <section class="panel output-panel">
+          <div class="panel-header">
+            <span class="panel-title">Output</span>
+          </div>
+          <div class="output" id="output">
+            <div class="empty">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <polygon points="5 3 19 12 5 21"/>
+              </svg>
+              <p>Click Run to execute your worker</p>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
   </div>
 
-  <!-- Add File Modal -->
+  <!-- Modals -->
   <div class="modal-overlay hidden" id="addFileModal">
     <div class="modal">
       <h2>Add File</h2>
       <input type="text" id="newFileName" placeholder="src/utils.ts">
       <div class="modal-actions">
-        <button class="btn secondary" id="cancelAdd">Cancel</button>
-        <button class="btn primary" id="confirmAdd">Add</button>
+        <button class="btn secondary" id="cancelAddFile">Cancel</button>
+        <button class="btn primary" id="confirmAddFile">Add</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay hidden" id="addTenantModal">
+    <div class="modal">
+      <h2>Create Tenant</h2>
+      <label class="input-label">Tenant ID</label>
+      <input type="text" id="newTenantId" placeholder="acme-corp">
+      <label class="input-label">Environment Variables (JSON)</label>
+      <textarea id="newTenantEnv" placeholder='{"API_KEY": "secret"}'></textarea>
+      <div class="modal-actions">
+        <button class="btn secondary" id="cancelAddTenant">Cancel</button>
+        <button class="btn primary" id="confirmAddTenant">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay hidden" id="addWorkerModal">
+    <div class="modal">
+      <h2>Create Worker</h2>
+      <label class="input-label">Worker ID</label>
+      <input type="text" id="newWorkerId" placeholder="api-handler">
+      <div class="modal-actions">
+        <button class="btn secondary" id="cancelAddWorker">Cancel</button>
+        <button class="btn primary" id="confirmAddWorker">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay hidden" id="tenantDetailModal">
+    <div class="modal modal-wide">
+      <div class="modal-header">
+        <h2>Tenant: <span id="tenantDetailId"></span></h2>
+        <button class="btn-icon" id="closeTenantDetail">&times;</button>
+      </div>
+      <div class="tenant-detail-content">
+        <div class="detail-section">
+          <label class="input-label">Environment Variables</label>
+          <textarea id="tenantEnvEditor" placeholder='{"API_KEY": "secret"}'></textarea>
+        </div>
+        <div class="detail-section">
+          <label class="input-label">Compatibility Date</label>
+          <input type="text" id="tenantCompatDate" placeholder="2026-01-24">
+        </div>
+        <div class="detail-section">
+          <label class="input-label">Compatibility Flags (comma-separated)</label>
+          <input type="text" id="tenantCompatFlags" placeholder="nodejs_compat">
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn danger" id="deleteTenantBtn">Delete</button>
+        <div style="flex:1"></div>
+        <button class="btn secondary" id="cancelTenantEdit">Cancel</button>
+        <button class="btn primary" id="saveTenantBtn">Save</button>
       </div>
     </div>
   </div>

@@ -39,15 +39,37 @@ export default {
 async function handleAPI(request: Request, url: URL, env: Env): Promise<Response> {
   const path = url.pathname.replace('/api', '');
 
-  // Create platform
+  // Create platform with defaults
   const platform = Platform.create({
     loader: env.LOADER,
     tenantsKV: env.TENANTS,
     workersKV: env.WORKERS,
+    defaults: {
+      env: { ENVIRONMENT: 'development' },
+      compatibilityDate: '2026-01-24',
+      compatibilityFlags: ['nodejs_compat'],
+      limits: { cpuMs: 50, subrequests: 50 },
+    },
     // outbound: exports.OutboundHandler(), // Uncomment to enable outbound interception
   });
 
   try {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Platform defaults
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // GET /api/defaults
+    if (path === '/defaults' && request.method === 'GET') {
+      return json(platform.getDefaults());
+    }
+
+    // PUT /api/defaults
+    if (path === '/defaults' && request.method === 'PUT') {
+      const updates = await request.json() as Partial<import('platforms-sdk').WorkerDefaults>;
+      platform.updateDefaults(updates);
+      return json({ success: true, defaults: platform.getDefaults() });
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Playground endpoints (ephemeral, for testing)
     // ─────────────────────────────────────────────────────────────────────────
@@ -102,7 +124,7 @@ async function handleAPI(request: Request, url: URL, env: Env): Promise<Response
       worker = env.LOADER.get(workerName, async () => ({
         mainModule: result.mainModule,
         modules: result.modules as Record<string, string>,
-        compatibilityDate: new Date().toISOString().split('T')[0],
+        compatibilityDate: '2026-01-24',
         compatibilityFlags: [],
         env: { API_KEY: 'demo-key-12345', DEBUG: 'true' },
         // globalOutbound: exports.OutboundHandler(), // Uncomment to enable

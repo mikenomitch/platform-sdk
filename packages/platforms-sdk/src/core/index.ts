@@ -77,7 +77,7 @@ export function loadWorker(loader: WorkerLoader, options: LoadWorkerOptions): Wo
   return loader.get(options.name, async () => ({
     mainModule: options.mainModule,
     modules: options.modules as Record<string, string>,
-    compatibilityDate: options.compatibilityDate ?? '2024-12-01',
+    compatibilityDate: options.compatibilityDate ?? '2026-01-24',
     compatibilityFlags: options.compatibilityFlags ?? [],
     env: options.env ?? {},
     globalOutbound: options.outbound ?? null,

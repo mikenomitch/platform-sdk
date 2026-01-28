@@ -135,7 +135,7 @@ export class Platform {
     // Global defaults (fallback values)
     this._defaults = {
       env: options.defaults?.env ?? {},
-      compatibilityDate: options.defaults?.compatibilityDate ?? '2024-12-01',
+      compatibilityDate: options.defaults?.compatibilityDate ?? '2026-01-24',
       compatibilityFlags: options.defaults?.compatibilityFlags ?? [],
       limits: options.defaults?.limits,
       tails: options.defaults?.tails ?? [],
@@ -469,7 +469,7 @@ export class Platform {
       worker.config.compatibilityDate ??
       tenant.config.compatibilityDate ??
       this._defaults.compatibilityDate ??
-      '2024-12-01';
+      '2026-01-24';
 
     // Compat flags: concatenate all (dedupe)
     const compatibilityFlags = [
@@ -616,7 +616,7 @@ export class Platform {
     const compatibilityDate =
       tenant.config.compatibilityDate ??
       this._defaults.compatibilityDate ??
-      '2024-12-01';
+      '2026-01-24';
 
     const compatibilityFlags = [
       ...new Set([

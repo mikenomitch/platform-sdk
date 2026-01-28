@@ -1,21 +1,32 @@
 // State
 let files = {};
 let currentFile = null;
+let selectedTenant = null;
+let selectedWorker = null;
+let platformDefaults = null;
 
-// DOM
+// DOM Elements
 const editor = document.getElementById('editor');
 const tabs = document.getElementById('tabs');
 const output = document.getElementById('output');
 const status = document.getElementById('status');
 const runBtn = document.getElementById('runBtn');
+const saveWorkerBtn = document.getElementById('saveWorkerBtn');
 const examples = document.getElementById('examples');
-const addFileBtn = document.getElementById('addFile');
+const contextInfo = document.getElementById('contextInfo');
+
+// Sidebar
+const defaultsGrid = document.getElementById('defaultsGrid');
+const tenantList = document.getElementById('tenantList');
+const workerList = document.getElementById('workerList');
+const workersSection = document.getElementById('workersSection');
+const selectedTenantBadge = document.getElementById('selectedTenantBadge');
+
+// Modals
 const addFileModal = document.getElementById('addFileModal');
-const newFileName = document.getElementById('newFileName');
-const cancelAdd = document.getElementById('cancelAdd');
-const confirmAdd = document.getElementById('confirmAdd');
-const bundleOpt = document.getElementById('bundleOpt');
-const minifyOpt = document.getElementById('minifyOpt');
+const addTenantModal = document.getElementById('addTenantModal');
+const addWorkerModal = document.getElementById('addWorkerModal');
+const tenantDetailModal = document.getElementById('tenantDetailModal');
 
 // Examples
 const EXAMPLES = {
@@ -91,18 +102,18 @@ export function handleUsers(request: Request): Response {
     'src/index.ts': `interface Env {
   API_KEY: string;
   DEBUG: string;
+  ENVIRONMENT: string;
 }
 
 export default {
   fetch(request: Request, env: Env): Response {
     // Access environment variables passed to the worker
     const info = {
+      environment: env.ENVIRONMENT,
       hasApiKey: !!env.API_KEY,
-      keyPreview: env.API_KEY?.slice(0, 8) + '...',
+      keyPreview: env.API_KEY ? env.API_KEY.slice(0, 8) + '...' : null,
       debugMode: env.DEBUG === 'true',
     };
-
-    console.log('Environment info:', info);
 
     return new Response(JSON.stringify(info, null, 2), {
       headers: { 'Content-Type': 'application/json' },
@@ -111,84 +122,446 @@ export default {
 }`,
     'package.json': JSON.stringify({ name: 'env-worker', main: 'src/index.ts' }, null, 2),
   },
-
-  hono: {
-    'src/index.ts': `import { Hono } from 'hono';
-import { cors } from 'hono/cors';
-
-const app = new Hono();
-
-app.use('*', cors());
-
-app.get('/', (c) => c.text('Hello from Hono!'));
-
-app.get('/json', (c) => c.json({ 
-  framework: 'Hono',
-  message: 'Running on Dynamic Workers!',
-}));
-
-app.get('/users/:id', (c) => {
-  const id = c.req.param('id');
-  return c.json({ user: { id, name: 'User ' + id } });
-});
-
-export default app;`,
-    'package.json': JSON.stringify({
-      name: 'hono-worker',
-      main: 'src/index.ts',
-      dependencies: {
-        hono: '^4.0.0',
-      },
-    }, null, 2),
-  },
 };
 
 // Initialize
-loadExample('hello');
+async function init() {
+  loadExample('hello');
+  await Promise.all([
+    loadDefaults(),
+    loadTenants(),
+  ]);
+  setupEventListeners();
+}
 
-// Event Listeners
-examples.addEventListener('change', (e) => {
-  if (e.target.value) {
-    loadExample(e.target.value);
-    e.target.value = '';
-  }
-});
+function setupEventListeners() {
+  // Examples
+  examples.addEventListener('change', (e) => {
+    if (e.target.value) {
+      loadExample(e.target.value);
+      e.target.value = '';
+    }
+  });
 
-editor.addEventListener('input', () => {
-  if (currentFile) files[currentFile] = editor.value;
-});
-
-editor.addEventListener('keydown', (e) => {
-  if (e.key === 'Tab') {
-    e.preventDefault();
-    const start = editor.selectionStart;
-    const end = editor.selectionEnd;
-    editor.value = editor.value.substring(0, start) + '  ' + editor.value.substring(end);
-    editor.selectionStart = editor.selectionEnd = start + 2;
+  // Editor
+  editor.addEventListener('input', () => {
     if (currentFile) files[currentFile] = editor.value;
+  });
+
+  editor.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const start = editor.selectionStart;
+      const end = editor.selectionEnd;
+      editor.value = editor.value.substring(0, start) + '  ' + editor.value.substring(end);
+      editor.selectionStart = editor.selectionEnd = start + 2;
+      if (currentFile) files[currentFile] = editor.value;
+    }
+  });
+
+  // Run button
+  runBtn.addEventListener('click', runWorker);
+
+  // Save worker button
+  saveWorkerBtn.addEventListener('click', saveWorker);
+
+  // Add file modal
+  document.getElementById('addFile').addEventListener('click', () => {
+    addFileModal.classList.remove('hidden');
+    document.getElementById('newFileName').value = '';
+    document.getElementById('newFileName').focus();
+  });
+  document.getElementById('cancelAddFile').addEventListener('click', () => addFileModal.classList.add('hidden'));
+  document.getElementById('confirmAddFile').addEventListener('click', addFile);
+  document.getElementById('newFileName').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') addFile();
+    if (e.key === 'Escape') addFileModal.classList.add('hidden');
+  });
+
+  // Add tenant modal
+  document.getElementById('addTenantBtn').addEventListener('click', () => {
+    addTenantModal.classList.remove('hidden');
+    document.getElementById('newTenantId').value = '';
+    document.getElementById('newTenantEnv').value = '';
+    document.getElementById('newTenantId').focus();
+  });
+  document.getElementById('cancelAddTenant').addEventListener('click', () => addTenantModal.classList.add('hidden'));
+  document.getElementById('confirmAddTenant').addEventListener('click', createTenant);
+
+  // Add worker modal
+  document.getElementById('addWorkerBtn').addEventListener('click', () => {
+    if (!selectedTenant) return;
+    addWorkerModal.classList.remove('hidden');
+    document.getElementById('newWorkerId').value = '';
+    document.getElementById('newWorkerId').focus();
+  });
+  document.getElementById('cancelAddWorker').addEventListener('click', () => addWorkerModal.classList.add('hidden'));
+  document.getElementById('confirmAddWorker').addEventListener('click', createWorker);
+
+  // Tenant detail modal
+  document.getElementById('closeTenantDetail').addEventListener('click', () => tenantDetailModal.classList.add('hidden'));
+  document.getElementById('cancelTenantEdit').addEventListener('click', () => tenantDetailModal.classList.add('hidden'));
+  document.getElementById('saveTenantBtn').addEventListener('click', saveTenant);
+  document.getElementById('deleteTenantBtn').addEventListener('click', deleteTenant);
+
+  // Section toggles
+  document.querySelectorAll('.section-header').forEach(header => {
+    header.addEventListener('click', (e) => {
+      if (e.target.closest('.section-actions button')) return;
+      const section = header.closest('.sidebar-section');
+      section.classList.toggle('collapsed');
+    });
+  });
+}
+
+// API calls
+async function loadDefaults() {
+  try {
+    const res = await fetch('/api/defaults');
+    platformDefaults = await res.json();
+    renderDefaults();
+  } catch (err) {
+    console.error('Failed to load defaults:', err);
   }
-});
+}
 
-runBtn.addEventListener('click', runWorker);
+async function loadTenants() {
+  try {
+    const res = await fetch('/api/tenants');
+    const data = await res.json();
+    renderTenants(data.tenants || []);
+  } catch (err) {
+    console.error('Failed to load tenants:', err);
+    tenantList.innerHTML = '<div class="error-state">Failed to load</div>';
+  }
+}
 
-addFileBtn.addEventListener('click', () => {
-  addFileModal.classList.remove('hidden');
-  newFileName.value = '';
-  newFileName.focus();
-});
+async function loadWorkers(tenantId) {
+  try {
+    const res = await fetch(`/api/tenants/${tenantId}/workers`);
+    const data = await res.json();
+    renderWorkers(data.workers || []);
+  } catch (err) {
+    console.error('Failed to load workers:', err);
+    workerList.innerHTML = '<div class="error-state">Failed to load</div>';
+  }
+}
 
-cancelAdd.addEventListener('click', () => addFileModal.classList.add('hidden'));
-confirmAdd.addEventListener('click', addFile);
-newFileName.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') addFile();
-  if (e.key === 'Escape') addFileModal.classList.add('hidden');
-});
+async function createTenant() {
+  const id = document.getElementById('newTenantId').value.trim();
+  if (!id) return;
 
-// Functions
+  let env = {};
+  const envText = document.getElementById('newTenantEnv').value.trim();
+  if (envText) {
+    try {
+      env = JSON.parse(envText);
+    } catch {
+      alert('Invalid JSON for environment variables');
+      return;
+    }
+  }
+
+  try {
+    await fetch('/api/tenants', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, env }),
+    });
+    addTenantModal.classList.add('hidden');
+    await loadTenants();
+    selectTenant(id);
+  } catch (err) {
+    alert('Failed to create tenant: ' + err.message);
+  }
+}
+
+async function saveTenant() {
+  const tenantId = document.getElementById('tenantDetailId').textContent;
+  
+  let env = {};
+  const envText = document.getElementById('tenantEnvEditor').value.trim();
+  if (envText) {
+    try {
+      env = JSON.parse(envText);
+    } catch {
+      alert('Invalid JSON for environment variables');
+      return;
+    }
+  }
+
+  const compatibilityDate = document.getElementById('tenantCompatDate').value.trim() || undefined;
+  const flagsText = document.getElementById('tenantCompatFlags').value.trim();
+  const compatibilityFlags = flagsText ? flagsText.split(',').map(f => f.trim()).filter(Boolean) : undefined;
+
+  try {
+    await fetch(`/api/tenants/${tenantId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ env, compatibilityDate, compatibilityFlags }),
+    });
+    tenantDetailModal.classList.add('hidden');
+    await loadTenants();
+  } catch (err) {
+    alert('Failed to save tenant: ' + err.message);
+  }
+}
+
+async function deleteTenant() {
+  const tenantId = document.getElementById('tenantDetailId').textContent;
+  if (!confirm(`Delete tenant "${tenantId}" and all its workers?`)) return;
+
+  try {
+    await fetch(`/api/tenants/${tenantId}`, { method: 'DELETE' });
+    tenantDetailModal.classList.add('hidden');
+    if (selectedTenant === tenantId) {
+      selectedTenant = null;
+      selectedWorker = null;
+      workersSection.style.display = 'none';
+      updateContext();
+    }
+    await loadTenants();
+  } catch (err) {
+    alert('Failed to delete tenant: ' + err.message);
+  }
+}
+
+async function createWorker() {
+  if (!selectedTenant) return;
+  const id = document.getElementById('newWorkerId').value.trim();
+  if (!id) return;
+
+  try {
+    await fetch(`/api/tenants/${selectedTenant}/workers`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, files }),
+    });
+    addWorkerModal.classList.add('hidden');
+    await loadWorkers(selectedTenant);
+    selectWorker(id);
+  } catch (err) {
+    alert('Failed to create worker: ' + err.message);
+  }
+}
+
+async function saveWorker() {
+  if (!selectedTenant || !selectedWorker) return;
+
+  try {
+    await fetch(`/api/tenants/${selectedTenant}/workers/${selectedWorker}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ files }),
+    });
+    setStatus('success', 'Saved');
+    await loadWorkers(selectedTenant);
+  } catch (err) {
+    alert('Failed to save worker: ' + err.message);
+  }
+}
+
+async function deleteWorker(tenantId, workerId) {
+  if (!confirm(`Delete worker "${workerId}"?`)) return;
+
+  try {
+    await fetch(`/api/tenants/${tenantId}/workers/${workerId}`, { method: 'DELETE' });
+    if (selectedWorker === workerId) {
+      selectedWorker = null;
+      saveWorkerBtn.style.display = 'none';
+      updateContext();
+    }
+    await loadWorkers(tenantId);
+  } catch (err) {
+    alert('Failed to delete worker: ' + err.message);
+  }
+}
+
+// Rendering
+function renderDefaults() {
+  if (!platformDefaults) {
+    defaultsGrid.innerHTML = '<div class="loading">Loading...</div>';
+    return;
+  }
+
+  const envCount = Object.keys(platformDefaults.env || {}).length;
+  const flagsCount = (platformDefaults.compatibilityFlags || []).length;
+  const limits = platformDefaults.limits || {};
+
+  defaultsGrid.innerHTML = `
+    <div class="default-item">
+      <span class="default-label">Compat Date</span>
+      <span class="default-value">${platformDefaults.compatibilityDate || 'Not set'}</span>
+    </div>
+    <div class="default-item">
+      <span class="default-label">Env Vars</span>
+      <span class="default-value">${envCount} defined</span>
+    </div>
+    <div class="default-item">
+      <span class="default-label">Flags</span>
+      <span class="default-value">${flagsCount > 0 ? platformDefaults.compatibilityFlags.join(', ') : 'None'}</span>
+    </div>
+    <div class="default-item">
+      <span class="default-label">CPU Limit</span>
+      <span class="default-value">${limits.cpuMs ? limits.cpuMs + 'ms' : 'Default'}</span>
+    </div>
+    <div class="default-item">
+      <span class="default-label">Subrequests</span>
+      <span class="default-value">${limits.subrequests || 'Default'}</span>
+    </div>
+  `;
+}
+
+function renderTenants(tenants) {
+  if (tenants.length === 0) {
+    tenantList.innerHTML = '<div class="empty-state">No tenants yet</div>';
+    return;
+  }
+
+  tenantList.innerHTML = tenants.map(t => `
+    <div class="list-item ${selectedTenant === t.id ? 'selected' : ''}" data-tenant="${t.id}">
+      <div class="list-item-content">
+        <span class="list-item-name">${escapeHtml(t.id)}</span>
+        <span class="list-item-meta">${formatDate(t.updatedAt)}</span>
+      </div>
+      <div class="list-item-actions">
+        <button class="btn-icon-sm" data-action="edit" title="Edit">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  `).join('');
+
+  // Event listeners
+  tenantList.querySelectorAll('.list-item').forEach(item => {
+    item.addEventListener('click', (e) => {
+      if (e.target.closest('[data-action="edit"]')) {
+        openTenantDetail(item.dataset.tenant);
+      } else {
+        selectTenant(item.dataset.tenant);
+      }
+    });
+  });
+}
+
+function renderWorkers(workers) {
+  if (workers.length === 0) {
+    workerList.innerHTML = '<div class="empty-state">No workers yet</div>';
+    return;
+  }
+
+  workerList.innerHTML = workers.map(w => `
+    <div class="list-item ${selectedWorker === w.id ? 'selected' : ''}" data-worker="${w.id}">
+      <div class="list-item-content">
+        <span class="list-item-name">${escapeHtml(w.id)}</span>
+        <span class="list-item-meta">v${w.version} - ${formatDate(w.updatedAt)}</span>
+      </div>
+      <div class="list-item-actions">
+        <button class="btn-icon-sm" data-action="delete" title="Delete">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="3 6 5 6 21 6"/>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  `).join('');
+
+  // Event listeners
+  workerList.querySelectorAll('.list-item').forEach(item => {
+    item.addEventListener('click', async (e) => {
+      if (e.target.closest('[data-action="delete"]')) {
+        await deleteWorker(selectedTenant, item.dataset.worker);
+      } else {
+        await selectWorkerAndLoad(item.dataset.worker);
+      }
+    });
+  });
+}
+
+async function openTenantDetail(tenantId) {
+  try {
+    const res = await fetch(`/api/tenants/${tenantId}`);
+    const data = await res.json();
+    
+    document.getElementById('tenantDetailId').textContent = tenantId;
+    document.getElementById('tenantEnvEditor').value = JSON.stringify(data.config?.env || {}, null, 2);
+    document.getElementById('tenantCompatDate').value = data.config?.compatibilityDate || '';
+    document.getElementById('tenantCompatFlags').value = (data.config?.compatibilityFlags || []).join(', ');
+    
+    tenantDetailModal.classList.remove('hidden');
+  } catch (err) {
+    alert('Failed to load tenant: ' + err.message);
+  }
+}
+
+// Selection
+function selectTenant(tenantId) {
+  selectedTenant = tenantId;
+  selectedWorker = null;
+  selectedTenantBadge.textContent = tenantId;
+  workersSection.style.display = 'block';
+  saveWorkerBtn.style.display = 'none';
+  
+  // Re-render tenants to update selection
+  const items = tenantList.querySelectorAll('.list-item');
+  items.forEach(item => {
+    item.classList.toggle('selected', item.dataset.tenant === tenantId);
+  });
+  
+  loadWorkers(tenantId);
+  updateContext();
+}
+
+function selectWorker(workerId) {
+  selectedWorker = workerId;
+  saveWorkerBtn.style.display = 'inline-flex';
+  
+  const items = workerList.querySelectorAll('.list-item');
+  items.forEach(item => {
+    item.classList.toggle('selected', item.dataset.worker === workerId);
+  });
+  
+  updateContext();
+}
+
+async function selectWorkerAndLoad(workerId) {
+  selectWorker(workerId);
+  
+  try {
+    const res = await fetch(`/api/tenants/${selectedTenant}/workers/${workerId}`);
+    const data = await res.json();
+    if (data.config?.files) {
+      files = { ...data.config.files };
+      renderTabs();
+      selectFile(Object.keys(files)[0]);
+    }
+  } catch (err) {
+    console.error('Failed to load worker:', err);
+  }
+}
+
+function updateContext() {
+  if (selectedTenant && selectedWorker) {
+    contextInfo.textContent = `${selectedTenant} / ${selectedWorker}`;
+  } else if (selectedTenant) {
+    contextInfo.textContent = selectedTenant;
+  } else {
+    contextInfo.textContent = '';
+  }
+}
+
+// File management
 function loadExample(name) {
   files = { ...EXAMPLES[name] };
+  selectedWorker = null;
+  saveWorkerBtn.style.display = selectedTenant ? 'none' : 'none';
   renderTabs();
   selectFile(Object.keys(files)[0]);
+  updateContext();
 }
 
 function renderTabs() {
@@ -216,7 +589,7 @@ function selectFile(name) {
 }
 
 function addFile() {
-  const name = newFileName.value.trim();
+  const name = document.getElementById('newFileName').value.trim();
   if (!name || files[name]) return;
   files[name] = name.endsWith('.json') ? '{}' : `// ${name}\n`;
   addFileModal.classList.add('hidden');
@@ -232,21 +605,29 @@ function deleteFile(name) {
   selectFile(currentFile);
 }
 
+// Worker execution
 async function runWorker() {
   setStatus('loading', 'Building...');
   runBtn.disabled = true;
 
   try {
+    const body = {
+      files,
+      options: {
+        bundle: document.getElementById('bundleOpt').checked,
+        minify: document.getElementById('minifyOpt').checked,
+      },
+    };
+
+    // If we have a tenant selected, use their defaults
+    if (selectedTenant) {
+      body.tenantId = selectedTenant;
+    }
+
     const res = await fetch('/api/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        files,
-        options: {
-          bundle: bundleOpt.checked,
-          minify: minifyOpt.checked,
-        },
-      }),
+      body: JSON.stringify(body),
     });
 
     const result = await res.json();
@@ -348,10 +729,27 @@ function showResult(result) {
   `;
 }
 
+// Utilities
 function escapeHtml(str) {
+  if (!str) return '';
   return str
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 }
+
+function formatDate(dateStr) {
+  if (!dateStr) return '';
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diff = now - date;
+  
+  if (diff < 60000) return 'just now';
+  if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+  if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+  return date.toLocaleDateString();
+}
+
+// Start
+init();
