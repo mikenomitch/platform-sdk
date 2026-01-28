@@ -1,0 +1,26 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "platforms-sdk-playground",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-01-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
+  // Dynamic Worker Loader - this is the magic
+  "worker_loaders": [
+    {
+      "binding": "LOADER"
+    }
+  ],
+  // KV for tenant storage
+  "kv_namespaces": [
+    {
+      "binding": "TENANTS",
+      "id": "placeholder-id"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

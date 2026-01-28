@@ -1,0 +1,15 @@
+{
+  "name": "workers-platforms-sdk",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w example",
+    "build": "npm run build -w platforms-sdk",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}
