@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/dracula.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/mode/simple.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/rust/rust.min.js"></script>
@@ -21,7 +22,7 @@
     <!-- Sidebar -->
     <aside class="sidebar">
       <div class="sidebar-header">
-        <div class="logo">
+        <a href="/" class="logo" id="logoLink">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 2L2 7l10 5 10-5-10-5z"/>
             <path d="M2 17l10 5 10-5"/>
@@ -31,7 +32,7 @@
             <h1>Platforms SDK</h1>
             <p class="subtitle">Dynamic Workers</p>
           </div>
-        </div>
+        </a>
       </div>
 
       <div class="sidebar-content">
@@ -61,7 +62,7 @@
         <!-- Tenants -->
         <section class="sidebar-section">
           <div class="section-header" data-toggle="tenants">
-            <span>Tenants</span>
+            <span>Tenants <button class="info-icon" data-info="tenants" title="About Tenants"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></button></span>
             <div class="section-actions">
               <button class="btn-sm" id="addTenantBtn" title="Add tenant">+</button>
               <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -94,10 +95,29 @@
           </div>
         </section>
 
+        <!-- Worker Templates -->
+        <section class="sidebar-section collapsed">
+          <div class="section-header" data-toggle="templates">
+            <span>Templates <button class="info-icon" data-info="templates" title="About Templates"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></button></span>
+            <div class="section-actions">
+              <button class="btn-sm" id="addTemplateBtn" title="Add template">+</button>
+              <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </div>
+          </div>
+          <div class="section-body">
+            <div class="template-list" id="templateList">
+              <div class="loading">Loading...</div>
+            </div>
+            <button class="btn-text" id="createDefaultTemplateBtn">Create Math Calculator Template</button>
+          </div>
+        </section>
+
         <!-- Outbound Workers -->
         <section class="sidebar-section collapsed">
           <div class="section-header" data-toggle="outbound">
-            <span>Outbound Workers</span>
+            <span>Outbound Workers <button class="info-icon" data-info="outbound" title="About Outbound Workers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></button></span>
             <div class="section-actions">
               <button class="btn-sm" id="addOutboundBtn" title="Add outbound worker">+</button>
               <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -116,7 +136,7 @@
         <!-- Tail Workers -->
         <section class="sidebar-section collapsed">
           <div class="section-header" data-toggle="tail">
-            <span>Tail Workers</span>
+            <span>Tail Workers <button class="info-icon" data-info="tail" title="About Tail Workers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></button></span>
             <div class="section-actions">
               <button class="btn-sm" id="addTailBtn" title="Add tail worker">+</button>
               <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -145,85 +165,529 @@
 
     <!-- Main Content -->
     <main class="main-content">
-      <header class="main-header">
-        <div class="header-left">
-          <select id="examples" class="select">
-            <option value="">Load example...</option>
-            <option value="hello">Hello World</option>
-            <option value="api">JSON API</option>
-            <option value="router">Router</option>
-            <option value="env">Environment</option>
-            <option value="subrequest">Subrequest (fetch)</option>
-          </select>
-          <span class="context-info" id="contextInfo"></span>
-        </div>
-        <div class="header-right">
-          <div class="status" id="status">
-            <span class="status-dot"></span>
-            <span>Ready</span>
+      <!-- Welcome View (no selection) -->
+      <div class="main-view" id="welcomeView">
+        <div class="welcome-container">
+          <div class="welcome-header">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="welcome-icon">
+              <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+              <path d="M2 17l10 5 10-5"/>
+              <path d="M2 12l10 5 10-5"/>
+            </svg>
+            <h1>Platforms SDK Playground</h1>
+            <p class="welcome-subtitle">Manage your Workers Platform for multiple Tenants, each with their own Dynamic Workers</p>
           </div>
-        </div>
-      </header>
 
-      <div class="main-grid">
-        <!-- Editor -->
-        <section class="panel editor-panel">
-          <div class="panel-header">
-            <div class="tabs" id="tabs"></div>
-            <button class="btn-icon" id="addFile" title="Add file">+</button>
-          </div>
-          <div class="editor-container" id="editorContainer">
-            <textarea id="editor" spellcheck="false" placeholder="Select a file..."></textarea>
-          </div>
-          <div class="panel-footer">
-            <button class="btn primary" id="runBtn">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                <polygon points="5 3 19 12 5 21"/>
-              </svg>
-              Run
-            </button>
-            <button class="btn secondary" id="saveWorkerBtn" style="display:none">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-                <polyline points="17 21 17 13 7 13 7 21"/>
-                <polyline points="7 3 7 8 15 8"/>
-              </svg>
-              Save Worker
-            </button>
-            <button class="btn secondary" id="createWorkerBtn" style="display:none">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <line x1="12" y1="5" x2="12" y2="19"/>
-                <line x1="5" y1="12" x2="19" y2="12"/>
-              </svg>
-              Create Worker
-            </button>
-            <div class="options">
-              <label class="checkbox">
-                <input type="checkbox" id="bundleOpt" checked>
-                <span>Bundle</span>
-              </label>
-              <label class="checkbox">
-                <input type="checkbox" id="minifyOpt">
-                <span>Minify</span>
-              </label>
+          <div class="welcome-cards">
+            <div class="welcome-card" id="welcomeCreateTenant" data-description="tenants">
+              <div class="welcome-card-icon tenant-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                  <circle cx="9" cy="7" r="4"/>
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                </svg>
+              </div>
+              <h3>Create a Tenant</h3>
+              <p class="welcome-card-desc"></p>
+              <button class="btn primary">Create Tenant</button>
+            </div>
+
+            <div class="welcome-card" id="welcomeCreateTemplate" data-description="templates">
+              <div class="welcome-card-icon template-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                  <line x1="3" y1="9" x2="21" y2="9"/>
+                  <line x1="9" y1="21" x2="9" y2="9"/>
+                </svg>
+              </div>
+              <h3>Create a Template</h3>
+              <p class="welcome-card-desc"></p>
+              <button class="btn primary">Create Template</button>
+            </div>
+
+            <div class="welcome-card" id="welcomeCreateOutbound" data-description="outbound">
+              <div class="welcome-card-icon outbound-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"/>
+                  <line x1="2" y1="12" x2="22" y2="12"/>
+                  <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                </svg>
+              </div>
+              <h3>Outbound Workers</h3>
+              <p class="welcome-card-desc"></p>
+              <button class="btn secondary" id="welcomeAddOutbound">Create Outbound Worker</button>
+            </div>
+
+            <div class="welcome-card" id="welcomeCreateTail" data-description="tail">
+              <div class="welcome-card-icon tail-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                  <polyline points="14 2 14 8 20 8"/>
+                  <line x1="16" y1="13" x2="8" y2="13"/>
+                  <line x1="16" y1="17" x2="8" y2="17"/>
+                  <polyline points="10 9 9 9 8 9"/>
+                </svg>
+              </div>
+              <h3>Tail Workers</h3>
+              <p class="welcome-card-desc"></p>
+              <button class="btn secondary" id="welcomeAddTail">Create Tail Worker</button>
             </div>
           </div>
-        </section>
 
-        <!-- Output -->
-        <section class="panel output-panel">
-          <div class="panel-header">
-            <span class="panel-title">Output</span>
+          <div class="welcome-footer">
+            <p>Or select an existing item from the sidebar to get started.</p>
           </div>
-          <div class="output" id="output">
-            <div class="empty">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <polygon points="5 3 19 12 5 21"/>
+        </div>
+      </div>
+
+      <!-- Platform Defaults View -->
+      <div class="main-view hidden" id="defaultsView">
+        <header class="view-header">
+          <div class="view-breadcrumb">
+            <button class="breadcrumb-btn" id="defaultsBackBtn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                <polyline points="15 18 9 12 15 6"/>
               </svg>
-              <p>Click Run to execute your worker</p>
+            </button>
+            <h2>Platform Defaults</h2>
+          </div>
+          <button class="btn primary" id="saveDefaultsBtn">Save Changes</button>
+        </header>
+        <div class="view-content">
+          <div class="form-section">
+            <label class="form-label">Environment Variables (JSON)</label>
+            <p class="form-hint">These environment variables are available to all tenant Workers by default.</p>
+            <textarea id="defaultsEnvInput" class="form-textarea" placeholder='{"API_KEY": "secret"}'></textarea>
+          </div>
+          <div class="form-row">
+            <div class="form-section">
+              <label class="form-label">Compatibility Date</label>
+              <input type="text" id="defaultsCompatDateInput" class="form-input" placeholder="2026-01-24">
+            </div>
+            <div class="form-section">
+              <label class="form-label">Compatibility Flags</label>
+              <input type="text" id="defaultsCompatFlagsInput" class="form-input" placeholder="nodejs_compat">
+              <p class="form-hint">Comma-separated list of flags</p>
             </div>
           </div>
-        </section>
+          <div class="form-row">
+            <div class="form-section">
+              <label class="form-label">CPU Limit (ms)</label>
+              <input type="number" id="defaultsCpuMsInput" class="form-input" placeholder="50">
+            </div>
+            <div class="form-section">
+              <label class="form-label">Subrequests Limit</label>
+              <input type="number" id="defaultsSubrequestsInput" class="form-input" placeholder="50">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tenant View -->
+      <div class="main-view hidden" id="tenantView">
+        <header class="view-header">
+          <div class="view-breadcrumb">
+            <button class="breadcrumb-btn" id="tenantBackBtn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                <polyline points="15 18 9 12 15 6"/>
+              </svg>
+            </button>
+            <h2>Tenant: <span id="tenantViewId"></span></h2>
+          </div>
+          <div class="view-actions">
+            <button class="btn danger" id="deleteTenantViewBtn">Delete Tenant</button>
+            <button class="btn primary" id="saveTenantViewBtn">Save Changes</button>
+          </div>
+        </header>
+        <div class="view-content">
+          <div class="tenant-workers-section">
+            <div class="section-header-inline">
+              <h2>Tenant Workers</h2>
+              <button class="btn secondary" id="addWorkerToTenantBtn">+ Add Worker</button>
+            </div>
+            <p class="section-description">These are the Dynamic Workers that have been generated by this Tenant.</p>
+            <div class="workers-grid" id="tenantWorkersGrid">
+              <div class="empty-state">
+                <p>No workers yet.</p>
+                <button class="btn primary" id="emptyStateCreateWorkerBtn">Create Worker for Tenant</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="section-divider"></div>
+
+          <div class="tenant-defaults-section">
+            <h2 class="section-title">Tenant Defaults</h2>
+            <p class="section-description">These settings will be automatically applied to any Dynamic Worker created for this Tenant.</p>
+
+            <div class="form-section">
+              <label class="form-label">Environment Variables (JSON)</label>
+              <textarea id="tenantEnvInput" class="form-textarea" placeholder='{"API_KEY": "tenant-secret"}'></textarea>
+            </div>
+            <div class="form-row">
+              <div class="form-section">
+                <label class="form-label">Compatibility Date</label>
+                <input type="text" id="tenantCompatDateInput" class="form-input" placeholder="2026-01-24">
+              </div>
+              <div class="form-section">
+                <label class="form-label">Compatibility Flags</label>
+                <input type="text" id="tenantCompatFlagsInput" class="form-input" placeholder="nodejs_compat">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-section">
+                <label class="form-label">Outbound Worker</label>
+                <select id="tenantOutboundInput" class="form-select">
+                  <option value="">None</option>
+                </select>
+              </div>
+              <div class="form-section">
+                <label class="form-label">Tail Workers</label>
+                <select id="tenantTailInput" class="form-select" multiple size="3">
+                </select>
+                <p class="form-hint">Hold Ctrl/Cmd to select multiple</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Template View (Create/Edit) -->
+      <div class="main-view hidden" id="templateView">
+        <header class="view-header">
+          <div class="view-breadcrumb">
+            <button class="breadcrumb-btn" id="templateBackBtn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                <polyline points="15 18 9 12 15 6"/>
+              </svg>
+            </button>
+            <h2 id="templateViewTitle">New Template</h2>
+          </div>
+          <div class="view-actions">
+            <button class="btn secondary hidden" id="useTemplateBtn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                <path d="M12 5v14M5 12h14"/>
+              </svg>
+              Create Worker from Template
+            </button>
+            <button class="btn danger hidden" id="deleteTemplateViewBtn">Delete</button>
+            <button class="btn primary" id="saveTemplateViewBtn">Save Template</button>
+          </div>
+        </header>
+        <div class="view-content template-edit-layout">
+          <!-- Top section: Configuration -->
+          <div class="template-config-section">
+            <div class="template-config-columns">
+              <!-- Left column: Basic info -->
+              <div class="template-config-left">
+                <div class="config-card">
+                  <div class="config-card-header">
+                    <h3>Template Info</h3>
+                    <span class="config-hint">Visible to end-users when they deploy this template</span>
+                  </div>
+                  <div class="form-section">
+                    <label class="form-label">Template ID</label>
+                    <input type="text" id="templateIdInput" class="form-input" placeholder="my-template">
+                    <p class="form-hint">Unique identifier (lowercase, no spaces)</p>
+                  </div>
+                  <div class="form-section">
+                    <label class="form-label">Name</label>
+                    <input type="text" id="templateNameInput" class="form-input" placeholder="My Template">
+                    <p class="form-hint">Display name shown to end-users</p>
+                  </div>
+                  <div class="form-section">
+                    <label class="form-label">Description</label>
+                    <textarea id="templateDescInput" class="form-textarea" placeholder="Describe what this template does and how end-users should configure it..."></textarea>
+                    <p class="form-hint">Help end-users understand what this worker does</p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Right column: Slots -->
+              <div class="template-config-right">
+                <div class="config-card">
+                  <div class="config-card-header">
+                    <h3>Slots</h3>
+                    <button class="btn-sm" id="addSlotBtn" title="Add slot">+ Add Slot</button>
+                  </div>
+                  <p class="config-description">Slots are customizable placeholders that end-users fill in when deploying. Use <code>{{slotName}}</code> in your code to reference them.</p>
+                  <div id="templateSlotsContainer" class="slots-container"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bottom section: Code editor -->
+          <div class="template-code-section">
+            <div class="code-section-header">
+              <div class="code-section-title">
+                <h3>Template Code</h3>
+                <span class="code-hint">Hidden from end-users - they only see the slots above</span>
+              </div>
+              <div class="code-section-actions">
+                <div class="tabs" id="templateFileTabs"></div>
+                <button class="btn-icon" id="addTemplateFile" title="Add file">+</button>
+              </div>
+            </div>
+            <div class="code-editor-container" id="templateCodeContainer"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Outbound Worker View (Create/Edit) -->
+      <div class="main-view hidden" id="outboundView">
+        <header class="view-header">
+          <div class="view-breadcrumb">
+            <button class="breadcrumb-btn" id="outboundBackBtn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                <polyline points="15 18 9 12 15 6"/>
+              </svg>
+            </button>
+            <h2 id="outboundViewTitle">New Outbound Worker</h2>
+          </div>
+          <div class="view-actions">
+            <button class="btn danger hidden" id="deleteOutboundViewBtn">Delete</button>
+            <button class="btn primary" id="saveOutboundViewBtn">Save Outbound Worker</button>
+          </div>
+        </header>
+        <div class="view-content code-view-layout">
+          <div class="code-view-sidebar">
+            <div class="form-section">
+              <label class="form-label">Outbound Worker ID</label>
+              <input type="text" id="outboundIdInput" class="form-input" placeholder="my-outbound">
+            </div>
+            <div class="form-section">
+              <label class="form-label">Name</label>
+              <input type="text" id="outboundNameInput" class="form-input" placeholder="My Outbound Worker">
+            </div>
+            <div class="info-box">
+              <h4>About Outbound Workers</h4>
+              <p>Outbound Workers intercept all <code>fetch()</code> requests made by tenant Workers. Use them to:</p>
+              <ul>
+                <li>Enforce security policies</li>
+                <li>Add request logging</li>
+                <li>Route through proxies</li>
+                <li>Block unauthorized domains</li>
+              </ul>
+            </div>
+          </div>
+          <div class="code-view-editor">
+            <div class="code-view-editor-header">
+              <span>src/index.ts</span>
+            </div>
+            <div class="code-editor-container" id="outboundCodeContainer"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tail Worker View (Create/Edit) -->
+      <div class="main-view hidden" id="tailView">
+        <header class="view-header">
+          <div class="view-breadcrumb">
+            <button class="breadcrumb-btn" id="tailBackBtn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                <polyline points="15 18 9 12 15 6"/>
+              </svg>
+            </button>
+            <h2 id="tailViewTitle">New Tail Worker</h2>
+          </div>
+          <div class="view-actions">
+            <button class="btn danger hidden" id="deleteTailViewBtn">Delete</button>
+            <button class="btn primary" id="saveTailViewBtn">Save Tail Worker</button>
+          </div>
+        </header>
+        <div class="view-content code-view-layout">
+          <div class="code-view-sidebar">
+            <div class="form-section">
+              <label class="form-label">Tail Worker ID</label>
+              <input type="text" id="tailIdInput" class="form-input" placeholder="my-tail">
+            </div>
+            <div class="form-section">
+              <label class="form-label">Name</label>
+              <input type="text" id="tailNameInput" class="form-input" placeholder="My Tail Worker">
+            </div>
+            <div class="info-box">
+              <h4>About Tail Workers</h4>
+              <p>Tail Workers receive logs and traces from tenant Workers after execution. Use them for:</p>
+              <ul>
+                <li>Custom logging pipelines</li>
+                <li>Analytics and metrics</li>
+                <li>Error tracking</li>
+                <li>Compliance auditing</li>
+              </ul>
+            </div>
+          </div>
+          <div class="code-view-editor">
+            <div class="code-view-editor-header">
+              <span>src/index.ts</span>
+            </div>
+            <div class="code-editor-container" id="tailCodeContainer"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Create Worker from Template View -->
+      <div class="main-view hidden" id="templateWorkerView">
+        <header class="view-header">
+          <div class="view-breadcrumb">
+            <button class="breadcrumb-btn" id="templateWorkerBackBtn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                <polyline points="15 18 9 12 15 6"/>
+              </svg>
+            </button>
+            <h2 id="templateWorkerViewTitle">Create Worker from Template</h2>
+            <span class="breadcrumb-context" id="templateWorkerTenantName"></span>
+          </div>
+          <div class="view-actions">
+            <button class="btn primary" id="createTemplateWorkerBtn">Create Worker</button>
+          </div>
+        </header>
+        <div class="view-content template-worker-vertical-layout">
+          <!-- User-facing section (what end-users see) -->
+          <div class="user-facing-section">
+            <div class="end-user-explainer">
+              <div class="explainer-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                  <circle cx="9" cy="7" r="4"/>
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                </svg>
+              </div>
+              <div class="explainer-content">
+                <h4>End-User Experience</h4>
+                <p>This is what your customers see when deploying a Worker from this template. The code is abstracted away - they only configure the values below.</p>
+              </div>
+            </div>
+
+            <div class="user-facing-content">
+              <div class="user-facing-left">
+                <div class="template-info-card" id="templateWorkerInfo">
+                  <h3 id="templateWorkerInfoName"></h3>
+                  <p id="templateWorkerInfoDesc" class="template-description"></p>
+                </div>
+              </div>
+
+              <div class="user-facing-right">
+                <div class="form-section">
+                  <label class="form-label">Worker ID</label>
+                  <input type="text" id="templateWorkerIdInput" class="form-input" placeholder="my-worker">
+                  <p class="form-hint">A unique identifier for this worker instance.</p>
+                </div>
+
+                <div class="form-section" id="templateWorkerSlotsSection">
+                  <label class="form-label">Configuration</label>
+                  <p class="form-hint">Customize the worker by filling in the values below.</p>
+                  <div id="templateWorkerSlotsContainer"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Code preview section (hidden from end-users) -->
+          <div class="code-preview-section">
+            <div class="preview-header">
+              <span class="preview-title">Code Preview</span>
+              <span class="preview-badge">Hidden from end-users</span>
+            </div>
+            <div class="preview-tabs" id="templateWorkerPreviewTabs"></div>
+            <div class="preview-editor-container" id="templateWorkerPreviewContainer"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Worker Editor View -->
+      <div class="main-view hidden" id="workerView">
+        <header class="view-header">
+          <div class="view-breadcrumb">
+            <button class="breadcrumb-btn" id="workerBackBtn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                <polyline points="15 18 9 12 15 6"/>
+              </svg>
+            </button>
+            <span class="breadcrumb-path" id="workerBreadcrumb"></span>
+          </div>
+          <div class="view-actions">
+            <select id="examples" class="select">
+              <option value="">Load example...</option>
+              <option value="hello">Hello World</option>
+              <option value="api">JSON API</option>
+              <option value="router">Router</option>
+              <option value="env">Environment</option>
+              <option value="templates">Templates</option>
+              <option value="package-loading">Package Loading</option>
+              <option value="subrequest">Subrequest (fetch)</option>
+            </select>
+            <div class="status" id="status">
+              <span class="status-dot"></span>
+              <span>Ready</span>
+            </div>
+          </div>
+        </header>
+        <div class="view-content worker-editor">
+          <div class="main-grid">
+            <!-- Editor -->
+            <section class="panel editor-panel">
+              <div class="panel-header">
+                <div class="tabs" id="tabs"></div>
+                <button class="btn-icon" id="addFile" title="Add file">+</button>
+              </div>
+              <div class="editor-container" id="editorContainer">
+                <textarea id="editor" spellcheck="false" placeholder="Select a file..."></textarea>
+              </div>
+              <div class="panel-footer">
+                <button class="btn primary" id="runBtn">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                    <polygon points="5 3 19 12 5 21"/>
+                  </svg>
+                  Run
+                </button>
+                <button class="btn secondary" id="saveWorkerBtn" style="display:none">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                    <polyline points="17 21 17 13 7 13 7 21"/>
+                    <polyline points="7 3 7 8 15 8"/>
+                  </svg>
+                  Save Worker
+                </button>
+                <button class="btn secondary" id="createWorkerBtn" style="display:none">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="12" y1="5" x2="12" y2="19"/>
+                    <line x1="5" y1="12" x2="19" y2="12"/>
+                  </svg>
+                  Create Worker
+                </button>
+                <div class="options">
+                  <label class="checkbox">
+                    <input type="checkbox" id="bundleOpt" checked>
+                    <span>Bundle</span>
+                  </label>
+                  <label class="checkbox">
+                    <input type="checkbox" id="minifyOpt">
+                    <span>Minify</span>
+                  </label>
+                </div>
+              </div>
+            </section>
+
+            <!-- Output -->
+            <section class="panel output-panel">
+              <div class="panel-header">
+                <span class="panel-title">Output</span>
+              </div>
+                <div class="output" id="output">
+                  <div class="empty">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                      <polygon points="5 3 19 12 5 21"/>
+                    </svg>
+                    <p>Click Run to execute your worker</p>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
       </div>
     </main>
   </div>
@@ -240,12 +704,23 @@
     </div>
   </div>
 
+  <div class="modal-overlay hidden" id="addTemplateFileModal">
+    <div class="modal">
+      <h2>Add Template File</h2>
+      <input type="text" id="newTemplateFileName" placeholder="src/utils.ts">
+      <div class="modal-actions">
+        <button class="btn secondary" id="cancelAddTemplateFile">Cancel</button>
+        <button class="btn primary" id="confirmAddTemplateFile">Add</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-overlay hidden" id="addTenantModal">
     <div class="modal">
       <h2>Create Tenant</h2>
       <label class="input-label">Tenant ID</label>
       <input type="text" id="newTenantId" placeholder="acme-corp">
-      <label class="input-label">Environment Variables (JSON)</label>
+      <label class="input-label">Environment Variables (JSON, optional)</label>
       <textarea id="newTenantEnv" placeholder='{"API_KEY": "secret"}'></textarea>
       <div class="modal-actions">
         <button class="btn secondary" id="cancelAddTenant">Cancel</button>
@@ -254,97 +729,40 @@
     </div>
   </div>
 
-  <div class="modal-overlay hidden" id="platformDefaultsModal">
-    <div class="modal modal-wide">
-      <div class="modal-header">
-        <h2>Platform Defaults</h2>
-        <button class="btn-icon" id="closePlatformDefaults">&times;</button>
-      </div>
-      <div class="detail-content">
-        <div class="detail-section">
-          <label class="input-label">Environment Variables (JSON)</label>
-          <textarea id="defaultsEnvEditor" placeholder='{"API_KEY": "secret"}'></textarea>
-        </div>
-        <div class="detail-section">
-          <label class="input-label">Compatibility Date</label>
-          <input type="text" id="defaultsCompatDate" placeholder="2026-01-24">
-        </div>
-        <div class="detail-section">
-          <label class="input-label">Compatibility Flags (comma-separated)</label>
-          <input type="text" id="defaultsCompatFlags" placeholder="nodejs_compat">
-        </div>
-        <div class="detail-section">
-          <label class="input-label">CPU Limit (ms)</label>
-          <input type="number" id="defaultsCpuMs" placeholder="50">
-        </div>
-        <div class="detail-section">
-          <label class="input-label">Subrequests Limit</label>
-          <input type="number" id="defaultsSubrequests" placeholder="50">
-        </div>
-      </div>
-      <div class="modal-actions">
-        <button class="btn secondary" id="cancelPlatformDefaults">Cancel</button>
-        <button class="btn primary" id="savePlatformDefaults">Save</button>
-      </div>
-    </div>
-  </div>
-
-  <div class="modal-overlay hidden" id="tenantDetailModal">
-    <div class="modal modal-wide">
-      <div class="modal-header">
-        <h2>Tenant: <span id="tenantDetailId"></span></h2>
-        <button class="btn-icon" id="closeTenantDetail">&times;</button>
-      </div>
-      <div class="tenant-detail-content">
-        <div class="detail-section">
-          <label class="input-label">Environment Variables</label>
-          <textarea id="tenantEnvEditor" placeholder='{"API_KEY": "secret"}'></textarea>
-        </div>
-        <div class="detail-section">
-          <label class="input-label">Compatibility Date</label>
-          <input type="text" id="tenantCompatDate" placeholder="2026-01-24">
-        </div>
-        <div class="detail-section">
-          <label class="input-label">Compatibility Flags (comma-separated)</label>
-          <input type="text" id="tenantCompatFlags" placeholder="nodejs_compat">
-        </div>
-        <div class="detail-section">
-          <label class="input-label">Outbound Worker</label>
-          <select id="tenantOutboundWorker" class="select full-width">
-            <option value="">None</option>
-          </select>
-        </div>
-        <div class="detail-section">
-          <label class="input-label">Tail Workers</label>
-          <select id="tenantTailWorkers" class="select full-width" multiple size="3">
-          </select>
-          <span class="input-hint">Hold Ctrl/Cmd to select multiple</span>
-        </div>
-      </div>
-      <div class="modal-actions">
-        <button class="btn danger" id="deleteTenantBtn">Delete</button>
-        <div style="flex:1"></div>
-        <button class="btn secondary" id="cancelTenantEdit">Cancel</button>
-        <button class="btn primary" id="saveTenantBtn">Save</button>
-      </div>
-    </div>
-  </div>
-
   <div class="modal-overlay hidden" id="addWorkerModal">
     <div class="modal modal-wide">
       <h2>Create Worker</h2>
-      <label class="input-label">Worker ID</label>
-      <input type="text" id="newWorkerId" placeholder="api-handler">
-      <label class="input-label">Environment Variables (JSON, merged with tenant/platform defaults)</label>
-      <textarea id="newWorkerEnv" placeholder='{"MY_VAR": "value"}'></textarea>
-      <label class="input-label">Outbound Worker</label>
-      <select id="workerOutboundSelect" class="select full-width">
-        <option value="">None (inherit from tenant)</option>
-      </select>
-      <label class="input-label">Tail Workers</label>
-      <select id="workerTailSelect" class="select full-width" multiple size="3">
-      </select>
-      <span class="input-hint">Hold Ctrl/Cmd to select multiple</span>
+      <div class="worker-type-selector">
+        <label class="radio-option">
+          <input type="radio" name="workerType" value="standard" checked>
+          <span>Standard Worker</span>
+        </label>
+        <label class="radio-option">
+          <input type="radio" name="workerType" value="template">
+          <span>From Template</span>
+        </label>
+      </div>
+      <div id="standardWorkerFields">
+        <label class="input-label">Worker ID</label>
+        <input type="text" id="newWorkerId" placeholder="api-handler">
+        <label class="input-label">Environment Variables (JSON, optional)</label>
+        <textarea id="newWorkerEnv" placeholder='{"API_KEY": "secret"}'></textarea>
+        <label class="input-label">Outbound Worker (optional)</label>
+        <select id="workerOutboundSelect" class="select full-width">
+          <option value="">None</option>
+        </select>
+        <label class="input-label">Tail Workers (optional)</label>
+        <select id="workerTailSelect" class="select full-width" multiple size="3">
+        </select>
+        <span class="input-hint">Hold Ctrl/Cmd to select multiple</span>
+      </div>
+      <div id="templateWorkerFields" style="display: none;">
+        <label class="input-label">Select Template</label>
+        <div id="templateButtonsContainer" class="template-buttons-grid">
+          <!-- Template buttons will be rendered here by JS -->
+        </div>
+        <p class="input-hint" id="templateSelectHint">Select a template to continue to the configuration page.</p>
+      </div>
       <div class="modal-actions">
         <button class="btn secondary" id="cancelAddWorker">Cancel</button>
         <button class="btn primary" id="confirmAddWorker">Create</button>
@@ -430,6 +848,137 @@
         <div style="flex:1"></div>
         <button class="btn secondary" id="cancelTailEdit">Cancel</button>
         <button class="btn primary" id="saveTailBtn">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay hidden" id="platformDefaultsModal">
+    <div class="modal modal-wide">
+      <div class="modal-header">
+        <h2>Platform Defaults</h2>
+        <button class="btn-icon" id="closePlatformDefaults">&times;</button>
+      </div>
+      <div class="detail-content">
+        <div class="detail-section">
+          <label class="input-label">Environment Variables (JSON)</label>
+          <textarea id="defaultsEnvEditor" placeholder='{"API_KEY": "secret"}'></textarea>
+        </div>
+        <div class="detail-section">
+          <label class="input-label">Compatibility Date</label>
+          <input type="text" id="defaultsCompatDate" placeholder="2026-01-24">
+        </div>
+        <div class="detail-section">
+          <label class="input-label">Compatibility Flags</label>
+          <input type="text" id="defaultsCompatFlags" placeholder="nodejs_compat">
+          <span class="input-hint">Comma-separated list</span>
+        </div>
+        <div class="detail-section">
+          <label class="input-label">CPU Limit (ms)</label>
+          <input type="number" id="defaultsCpuMs" placeholder="50">
+        </div>
+        <div class="detail-section">
+          <label class="input-label">Subrequests Limit</label>
+          <input type="number" id="defaultsSubrequests" placeholder="50">
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn secondary" id="cancelPlatformDefaults">Cancel</button>
+        <button class="btn primary" id="savePlatformDefaults">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay hidden" id="tenantDetailModal">
+    <div class="modal modal-wide">
+      <div class="modal-header">
+        <h2>Tenant: <span id="tenantDetailId"></span></h2>
+        <button class="btn-icon" id="closeTenantDetail">&times;</button>
+      </div>
+      <div class="tenant-detail-content">
+        <div class="detail-section">
+          <label class="input-label">Environment Variables (JSON)</label>
+          <textarea id="tenantEnvEditor" placeholder='{"API_KEY": "tenant-secret"}'></textarea>
+        </div>
+        <div class="detail-section">
+          <label class="input-label">Compatibility Date</label>
+          <input type="text" id="tenantCompatDate" placeholder="2026-01-24">
+        </div>
+        <div class="detail-section">
+          <label class="input-label">Compatibility Flags</label>
+          <input type="text" id="tenantCompatFlags" placeholder="nodejs_compat">
+          <span class="input-hint">Comma-separated list</span>
+        </div>
+        <div class="detail-section">
+          <label class="input-label">Outbound Worker</label>
+          <select id="tenantOutboundWorker" class="select full-width">
+            <option value="">None</option>
+          </select>
+        </div>
+        <div class="detail-section">
+          <label class="input-label">Tail Workers</label>
+          <select id="tenantTailWorkers" class="select full-width" multiple size="3">
+          </select>
+          <span class="input-hint">Hold Ctrl/Cmd to select multiple</span>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn danger" id="deleteTenantBtn">Delete</button>
+        <div style="flex:1"></div>
+        <button class="btn secondary" id="cancelTenantEdit">Cancel</button>
+        <button class="btn primary" id="saveTenantBtn">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay hidden" id="addTemplateModal">
+    <div class="modal modal-large">
+      <h2>Create Template</h2>
+      <label class="input-label">Template ID</label>
+      <input type="text" id="newTemplateId" placeholder="my-template">
+      <label class="input-label">Name</label>
+      <input type="text" id="newTemplateName" placeholder="My Template">
+      <label class="input-label">Description</label>
+      <textarea id="newTemplateDescription" placeholder="A reusable worker template..."></textarea>
+      <label class="input-label">Slots (JSON)</label>
+      <textarea id="newTemplateSlots" placeholder='[{"name": "varName", "description": "Description", "defaultValue": "default"}]'></textarea>
+      <label class="input-label">Code (src/index.ts)</label>
+      <div class="code-editor-container" id="newTemplateCodeContainer"></div>
+      <div class="modal-actions">
+        <button class="btn secondary" id="cancelAddTemplate">Cancel</button>
+        <button class="btn primary" id="confirmAddTemplate">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay hidden" id="templateDetailModal">
+    <div class="modal modal-large">
+      <div class="modal-header">
+        <h2>Template: <span id="templateDetailId"></span></h2>
+        <button class="btn-icon" id="closeTemplateDetail">&times;</button>
+      </div>
+      <div class="detail-content">
+        <div class="detail-section">
+          <label class="input-label">Name</label>
+          <input type="text" id="templateDetailName">
+        </div>
+        <div class="detail-section">
+          <label class="input-label">Description</label>
+          <textarea id="templateDetailDescription"></textarea>
+        </div>
+        <div class="detail-section">
+          <label class="input-label">Slots (JSON)</label>
+          <textarea id="templateDetailSlots"></textarea>
+        </div>
+        <div class="detail-section">
+          <label class="input-label">Code (src/index.ts)</label>
+          <div class="code-editor-container" id="templateDetailCodeContainer"></div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn danger" id="deleteTemplateBtn">Delete</button>
+        <div style="flex:1"></div>
+        <button class="btn secondary" id="cancelTemplateEdit">Cancel</button>
+        <button class="btn primary" id="saveTemplateBtn">Save</button>
       </div>
     </div>
   </div>

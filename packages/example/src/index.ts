@@ -52,6 +52,23 @@ interface TailWorkerConfig {
   updatedAt: string;
 }
 
+// Worker template definitions
+interface TemplateSlot {
+  name: string;
+  description: string;
+  defaultValue: string;
+}
+
+interface WorkerTemplate {
+  id: string;
+  name: string;
+  description: string;
+  slots: TemplateSlot[];
+  files: Record<string, string>; // Files with {{slotName}} placeholders
+  createdAt: string;
+  updatedAt: string;
+}
+
 // Default outbound worker that blocks all except zombo.com
 const DEFAULT_OUTBOUND_FILES: Record<string, string> = {
   'src/index.ts': `import { WorkerEntrypoint } from 'cloudflare:workers';
@@ -145,8 +162,57 @@ export class OutboundHandler extends WorkerEntrypoint {
 // KV key prefixes for outbound and tail workers
 const OUTBOUND_PREFIX = 'outbound:';
 const TAIL_PREFIX = 'tail:';
+const TEMPLATE_PREFIX = 'template:';
 const TENANT_ASSOC_PREFIX = 'tenant-assoc:';
 const WORKER_ASSOC_PREFIX = 'worker-assoc:';
+
+// Default math worker template
+const DEFAULT_MATH_TEMPLATE: WorkerTemplate = {
+  id: 'math-calculator',
+  name: 'Math Calculator',
+  description: 'A simple worker that performs math operations and returns the result. Use the pre-defined add(), subtract(), multiply(), and divide() functions.',
+  slots: [
+    {
+      name: 'calculation',
+      description: 'The math expression to evaluate using add(), subtract(), multiply(), divide() functions',
+      defaultValue: 'add(multiply(2, 3), subtract(10, 5))',
+    },
+  ],
+  files: {
+    'src/index.ts': `// Math Calculator Worker
+// Uses pre-defined math functions to compute a result
+
+function add(a: number, b: number): number {
+  return a + b;
+}
+
+function subtract(a: number, b: number): number {
+  return a - b;
+}
+
+function multiply(a: number, b: number): number {
+  return a * b;
+}
+
+function divide(a: number, b: number): number {
+  if (b === 0) throw new Error('Division by zero');
+  return a / b;
+}
+
+export default {
+  fetch(request: Request): Response {
+    const result = {{calculation}};
+    
+    return new Response(JSON.stringify({ result }, null, 2), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}`,
+    'package.json': JSON.stringify({ name: 'math-calculator', main: 'src/index.ts' }, null, 2),
+  },
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
+};
 
 // Association types - what outbound/tail workers are attached to a tenant or worker
 interface TenantAssociations {
@@ -211,6 +277,46 @@ async function listTailWorkers(kv: KVNamespace): Promise<TailWorkerConfig[]> {
     if (data) results.push(JSON.parse(data));
   }
   return results;
+}
+
+// Helper to get/put templates
+async function getTemplate(kv: KVNamespace, id: string): Promise<WorkerTemplate | null> {
+  const data = await kv.get(TEMPLATE_PREFIX + id);
+  return data ? JSON.parse(data) : null;
+}
+
+async function putTemplate(kv: KVNamespace, template: WorkerTemplate): Promise<void> {
+  await kv.put(TEMPLATE_PREFIX + template.id, JSON.stringify(template));
+}
+
+async function deleteTemplate(kv: KVNamespace, id: string): Promise<boolean> {
+  const existing = await getTemplate(kv, id);
+  if (!existing) return false;
+  await kv.delete(TEMPLATE_PREFIX + id);
+  return true;
+}
+
+async function listTemplates(kv: KVNamespace): Promise<WorkerTemplate[]> {
+  const list = await kv.list({ prefix: TEMPLATE_PREFIX });
+  const results: WorkerTemplate[] = [];
+  for (const key of list.keys) {
+    const data = await kv.get(key.name);
+    if (data) results.push(JSON.parse(data));
+  }
+  return results;
+}
+
+// Apply slot values to template files
+function applyTemplateSlots(files: Record<string, string>, slotValues: Record<string, string>): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [filename, content] of Object.entries(files)) {
+    let processed = content;
+    for (const [slotName, value] of Object.entries(slotValues)) {
+      processed = processed.replace(new RegExp(`\\{\\{${slotName}\\}\\}`, 'g'), value);
+    }
+    result[filename] = processed;
+  }
+  return result;
 }
 
 // Build and get a stub for an outbound worker
@@ -280,20 +386,36 @@ export default {
   },
 };
 
+const PLATFORM_DEFAULTS_KEY = 'platform-defaults';
+
+const DEFAULT_PLATFORM_DEFAULTS: import('platforms-sdk').WorkerDefaults = {
+  env: { ENVIRONMENT: 'development' },
+  compatibilityDate: '2026-01-24',
+  compatibilityFlags: ['nodejs_compat'],
+  limits: { cpuMs: 50, subrequests: 50 },
+};
+
+async function getPlatformDefaults(kv: KVNamespace): Promise<import('platforms-sdk').WorkerDefaults> {
+  const stored = await kv.get<import('platforms-sdk').WorkerDefaults>(PLATFORM_DEFAULTS_KEY, 'json');
+  return stored ?? DEFAULT_PLATFORM_DEFAULTS;
+}
+
+async function savePlatformDefaults(kv: KVNamespace, defaults: import('platforms-sdk').WorkerDefaults): Promise<void> {
+  await kv.put(PLATFORM_DEFAULTS_KEY, JSON.stringify(defaults));
+}
+
 async function handleAPI(request: Request, url: URL, env: Env): Promise<Response> {
   const path = url.pathname.replace('/api', '');
 
-  // Create platform with defaults
+  // Load persisted defaults from KV
+  const storedDefaults = await getPlatformDefaults(env.WORKERS);
+
+  // Create platform with persisted defaults
   const platform = Platform.create({
     loader: env.LOADER,
     tenantsKV: env.TENANTS,
     workersKV: env.WORKERS,
-    defaults: {
-      env: { ENVIRONMENT: 'development' },
-      compatibilityDate: '2026-01-24',
-      compatibilityFlags: ['nodejs_compat'],
-      limits: { cpuMs: 50, subrequests: 50 },
-    },
+    defaults: storedDefaults,
     // outbound: exports.OutboundHandler(), // Uncomment to enable outbound interception
   });
 
@@ -311,7 +433,9 @@ async function handleAPI(request: Request, url: URL, env: Env): Promise<Response
     if (path === '/defaults' && request.method === 'PUT') {
       const updates = await request.json() as Partial<import('platforms-sdk').WorkerDefaults>;
       platform.updateDefaults(updates);
-      return json({ success: true, defaults: platform.getDefaults() });
+      const newDefaults = platform.getDefaults();
+      await savePlatformDefaults(env.WORKERS, newDefaults);
+      return json({ success: true, defaults: newDefaults });
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -536,6 +660,9 @@ async function handleAPI(request: Request, url: URL, env: Env): Promise<Response
     if (workersMatch && request.method === 'POST') {
       const { outboundWorkerId, tailWorkerIds, ...config } = await request.json() as 
         Omit<import('platforms-sdk').WorkerConfig, 'tenantId'> & WorkerAssociations;
+      
+      console.log('[DEBUG] POST /api/tenants/:id/workers - config:', JSON.stringify(config, null, 2));
+      console.log('[DEBUG] POST /api/tenants/:id/workers - files keys:', Object.keys(config.files || {}));
       
       const tenantId = workersMatch[1];
       const metadata = await platform.createWorker(tenantId, config);
@@ -789,6 +916,114 @@ async function handleAPI(request: Request, url: URL, env: Env): Promise<Response
       };
       await putTailWorker(env.WORKERS, config);
       return json({ success: true, config }, 201);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Worker Templates CRUD
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // GET /api/templates
+    if (path === '/templates' && request.method === 'GET') {
+      const templates = await listTemplates(env.WORKERS);
+      return json({ templates });
+    }
+
+    // POST /api/templates
+    if (path === '/templates' && request.method === 'POST') {
+      const { id, name, description, slots, files } = await request.json() as {
+        id: string;
+        name: string;
+        description: string;
+        slots: TemplateSlot[];
+        files: Record<string, string>;
+      };
+      
+      if (!id || !name || !files) {
+        return json({ error: 'Missing required fields: id, name, files' }, 400);
+      }
+      
+      const existing = await getTemplate(env.WORKERS, id);
+      if (existing) {
+        return json({ error: `Template "${id}" already exists` }, 409);
+      }
+      
+      const now = new Date().toISOString();
+      const template: WorkerTemplate = {
+        id,
+        name,
+        description: description || '',
+        slots: slots || [],
+        files,
+        createdAt: now,
+        updatedAt: now,
+      };
+      await putTemplate(env.WORKERS, template);
+      return json({ success: true, template }, 201);
+    }
+
+    // GET/PUT/DELETE /api/templates/:id
+    const templateMatch = path.match(/^\/templates\/([^/]+)$/);
+    if (templateMatch) {
+      const id = templateMatch[1];
+      
+      if (request.method === 'GET') {
+        const template = await getTemplate(env.WORKERS, id);
+        if (!template) return json({ error: 'Template not found' }, 404);
+        return json(template);
+      }
+      
+      if (request.method === 'PUT') {
+        const existing = await getTemplate(env.WORKERS, id);
+        if (!existing) return json({ error: 'Template not found' }, 404);
+        
+        const updates = await request.json() as Partial<WorkerTemplate>;
+        const template: WorkerTemplate = {
+          ...existing,
+          ...updates,
+          id, // Can't change ID
+          updatedAt: new Date().toISOString(),
+        };
+        await putTemplate(env.WORKERS, template);
+        return json({ success: true, template });
+      }
+      
+      if (request.method === 'DELETE') {
+        const deleted = await deleteTemplate(env.WORKERS, id);
+        return json({ success: deleted });
+      }
+    }
+
+    // POST /api/templates/create-default
+    if (path === '/templates/create-default' && request.method === 'POST') {
+      const existing = await getTemplate(env.WORKERS, 'math-calculator');
+      if (existing) {
+        return json({ success: true, template: existing, message: 'Default template already exists' });
+      }
+      
+      await putTemplate(env.WORKERS, DEFAULT_MATH_TEMPLATE);
+      return json({ success: true, template: DEFAULT_MATH_TEMPLATE }, 201);
+    }
+
+    // POST /api/templates/:id/generate - Generate worker files from template
+    const generateMatch = path.match(/^\/templates\/([^/]+)\/generate$/);
+    if (generateMatch && request.method === 'POST') {
+      const id = generateMatch[1];
+      const template = await getTemplate(env.WORKERS, id);
+      if (!template) return json({ error: 'Template not found' }, 404);
+      
+      const { slotValues } = await request.json() as { slotValues: Record<string, string> };
+      console.log('[DEBUG] POST /api/templates/:id/generate - slotValues:', slotValues);
+      console.log('[DEBUG] POST /api/templates/:id/generate - template.files:', Object.keys(template.files));
+      
+      // Fill in default values for any missing slots
+      const finalSlotValues: Record<string, string> = {};
+      for (const slot of template.slots) {
+        finalSlotValues[slot.name] = slotValues?.[slot.name] ?? slot.defaultValue;
+      }
+      
+      const generatedFiles = applyTemplateSlots(template.files, finalSlotValues);
+      console.log('[DEBUG] POST /api/templates/:id/generate - generatedFiles:', Object.keys(generatedFiles));
+      return json({ success: true, files: generatedFiles, slotValues: finalSlotValues });
     }
 
     return json({ error: 'Not found' }, 404);
