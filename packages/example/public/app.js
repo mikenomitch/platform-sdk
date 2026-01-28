@@ -1350,10 +1350,10 @@ function showResult(result) {
     `}
 
     <div class="output-section">
-      <div class="output-label">Timing</div>
+      <div class="output-label">Timing ${timing.cached ? '<span class="cache-badge">cached</span>' : ''}</div>
       <div class="timing-grid">
         <div class="timing-item">
-          <div class="timing-value">${timing.buildTime}ms</div>
+          <div class="timing-value">${timing.cached ? '0' : timing.buildTime}ms</div>
           <div class="timing-label">Build</div>
         </div>
         <div class="timing-item">
@@ -1372,7 +1372,7 @@ function showResult(result) {
     </div>
 
     <div class="output-section">
-      <div class="output-label">Build Info</div>
+      <div class="output-label">Build Info ${buildInfo.cached ? '<span class="cache-badge">cached</span>' : ''}</div>
       <div class="output-content">Entry: ${buildInfo.mainModule}</div>
       <div class="modules-list">
         ${buildInfo.modules.map(m => `<span class="module-badge">${m}</span>`).join('')}

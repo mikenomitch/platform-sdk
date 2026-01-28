@@ -18,6 +18,23 @@ interface Env {
   ASSETS: Fetcher;
 }
 
+// Cached bundle for ephemeral workers (stored in KV)
+interface EphemeralBundle {
+  mainModule: string;
+  modules: Record<string, string>;
+  builtAt: string;
+}
+
+// Hash files to create a cache key for ephemeral bundles
+async function hashFiles(files: Record<string, string>): Promise<string> {
+  const content = JSON.stringify(files, Object.keys(files).sort());
+  const buffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(content));
+  const hashArray = Array.from(new Uint8Array(buffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 16);
+}
+
+const EPHEMERAL_BUNDLE_PREFIX = 'ephemeral-bundle:';
+
 // Types for outbound/tail worker definitions stored in KV
 interface OutboundWorkerConfig {
   id: string;
@@ -301,7 +318,7 @@ async function handleAPI(request: Request, url: URL, env: Env): Promise<Response
     // Playground endpoints (ephemeral, for testing)
     // ─────────────────────────────────────────────────────────────────────────
 
-    // POST /api/run - Build and run code (ephemeral)
+    // POST /api/run - Build and run code (ephemeral, with caching)
     if (path === '/run' && request.method === 'POST') {
       const { files, options, tenantId } = await request.json() as {
         files: Record<string, string>;
@@ -309,97 +326,95 @@ async function handleAPI(request: Request, url: URL, env: Env): Promise<Response
         tenantId?: string;
       };
 
-      const buildStart = Date.now();
-      const result = await buildWorker(files, options);
-      const buildTime = Date.now() - buildStart;
+      // Hash files to create a stable cache key
+      const filesHash = await hashFiles(files);
+      const cacheKey = EPHEMERAL_BUNDLE_PREFIX + filesHash;
+      
+      // Check if we have a cached bundle
+      let mainModule: string;
+      let modules: Record<string, string>;
+      let buildTime = 0;
+      let cacheHit = false;
+      
+      const cachedBundle = await env.WORKERS.get<EphemeralBundle>(cacheKey, 'json');
+      if (cachedBundle) {
+        // Use cached bundle
+        mainModule = cachedBundle.mainModule;
+        modules = cachedBundle.modules;
+        cacheHit = true;
+      } else {
+        // Build and cache
+        const buildStart = Date.now();
+        const result = await buildWorker(files, options);
+        buildTime = Date.now() - buildStart;
+        
+        mainModule = result.mainModule;
+        modules = result.modules as Record<string, string>;
+        
+        // Store in KV for future requests (TTL: 1 hour)
+        const bundle: EphemeralBundle = {
+          mainModule,
+          modules,
+          builtAt: new Date().toISOString(),
+        };
+        await env.WORKERS.put(cacheKey, JSON.stringify(bundle), { expirationTtl: 3600 });
+      }
 
-      // If tenantId provided, use tenant defaults; otherwise create ephemeral
-      let worker;
+      // Load worker - use hash as the worker name so loader can cache it too
       const loadStart = Date.now();
+      const workerName = tenantId ? `${tenantId}:playground:${filesHash}` : `playground:${filesHash}`;
+      
+      // Get tenant config if provided
+      let tenantEnv: Record<string, unknown> = { 
+        API_KEY: 'demo-key-12345', 
+        DEBUG: 'true',
+        ENVIRONMENT: 'development',
+      };
+      let compatDate = '2026-01-24';
+      let compatFlags: string[] = ['nodejs_compat'];
+      let limits: { cpuMs?: number; subrequests?: number } | undefined = { cpuMs: 50, subrequests: 50 };
       
       if (tenantId) {
-        // Ensure tenant exists, create if not
         let tenant = await platform.getTenant(tenantId);
         if (!tenant) {
           await platform.createTenant({ id: tenantId });
           tenant = await platform.getTenant(tenantId);
         }
-        
-        // Merge tenant env (ASSETS binding not supported for ephemeral workers)
-        const tenantEnv = {
-          ...platform.getDefaults().env,
-          ...tenant?.config.env,
-        };
-        
-        const workerName = `${tenantId}:ephemeral:${Date.now()}`;
-        const worker = env.LOADER.get(workerName, async () => ({
-          mainModule: result.mainModule,
-          modules: result.modules as Record<string, string>,
-          compatibilityDate: tenant?.config.compatibilityDate ?? platform.getDefaults().compatibilityDate ?? '2026-01-24',
-          compatibilityFlags: [
-            ...(platform.getDefaults().compatibilityFlags ?? []),
-            ...(tenant?.config.compatibilityFlags ?? []),
-          ],
-          env: tenantEnv,
-          limits: { ...platform.getDefaults().limits, ...tenant?.config.limits },
-          globalOutbound: typedExports.OutboundHandler,
-        }));
-        const loadTime = Date.now() - loadStart;
-        
-        const testReq = new Request('https://tenant.local/', { method: 'GET' });
-        const runStart = Date.now();
-        let response: Response;
-        let responseBody: string;
-        let workerError: { message: string; stack?: string } | null = null;
-
-        try {
-          response = await worker.getEntrypoint().fetch(testReq);
-          responseBody = await response.text();
-          if (response.status >= 500 && responseBody === 'Internal Server Error') {
-            workerError = { message: 'Worker threw an uncaught exception' };
-          }
-        } catch (err) {
-          workerError = {
-            message: err instanceof Error ? err.message : String(err),
-            stack: err instanceof Error ? err.stack : undefined,
+        if (tenant) {
+          tenantEnv = {
+            ...platform.getDefaults().env,
+            ...tenant.config.env,
           };
-          response = new Response('', { status: 500 });
-          responseBody = '';
+          compatDate = tenant.config.compatibilityDate ?? platform.getDefaults().compatibilityDate ?? '2026-01-24';
+          compatFlags = [
+            ...(platform.getDefaults().compatibilityFlags ?? []),
+            ...(tenant.config.compatibilityFlags ?? []),
+          ];
+          limits = { ...platform.getDefaults().limits, ...tenant.config.limits };
         }
-        const runTime = Date.now() - runStart;
-
-        return json({
-          success: !workerError,
-          buildInfo: {
-            mainModule: result.mainModule,
-            modules: Object.keys(result.modules),
-            warnings: result.warnings ?? [],
-          },
-          response: {
-            status: response.status,
-            headers: Object.fromEntries(response.headers),
-            body: responseBody,
-          },
-          workerError,
-          timing: { buildTime, loadTime, runTime, total: buildTime + loadTime + runTime },
-        });
       }
-
-      // Ephemeral without tenant (ASSETS binding not supported for ephemeral workers)
-      const workerName = `ephemeral-${Date.now()}`;
-      worker = env.LOADER.get(workerName, async () => ({
-        mainModule: result.mainModule,
-        modules: result.modules as Record<string, string>,
-        compatibilityDate: '2026-01-24',
-        compatibilityFlags: [],
-        env: { 
-          API_KEY: 'demo-key-12345', 
-          DEBUG: 'true',
-        },
-        globalOutbound: typedExports.OutboundHandler,
-      }));
+      
+      // The loader callback only runs on cold starts - it fetches the cached bundle
+      const workersKV = env.WORKERS;
+      const worker = env.LOADER.get(workerName, async () => {
+        // On cold start, fetch from KV (fast) instead of rebuilding (slow)
+        const bundle = await workersKV.get<EphemeralBundle>(cacheKey, 'json');
+        if (!bundle) {
+          throw new Error(`Bundle not found for hash ${filesHash}`);
+        }
+        return {
+          mainModule: bundle.mainModule,
+          modules: bundle.modules,
+          compatibilityDate: compatDate,
+          compatibilityFlags: compatFlags,
+          env: tenantEnv,
+          limits,
+          globalOutbound: typedExports.OutboundHandler,
+        };
+      });
       const loadTime = Date.now() - loadStart;
-
+      
+      // Execute the worker
       const testReq = new Request('https://tenant.local/', { method: 'GET' });
       const runStart = Date.now();
       let response: Response;
@@ -425,9 +440,10 @@ async function handleAPI(request: Request, url: URL, env: Env): Promise<Response
       return json({
         success: !workerError,
         buildInfo: {
-          mainModule: result.mainModule,
-          modules: Object.keys(result.modules),
-          warnings: result.warnings ?? [],
+          mainModule,
+          modules: Object.keys(modules),
+          warnings: [],
+          cached: cacheHit,
         },
         response: {
           status: response.status,
@@ -435,7 +451,13 @@ async function handleAPI(request: Request, url: URL, env: Env): Promise<Response
           body: responseBody,
         },
         workerError,
-        timing: { buildTime, loadTime, runTime, total: buildTime + loadTime + runTime },
+        timing: { 
+          buildTime: cacheHit ? 0 : buildTime,
+          loadTime, 
+          runTime, 
+          total: (cacheHit ? 0 : buildTime) + loadTime + runTime,
+          cached: cacheHit,
+        },
       });
     }
 
