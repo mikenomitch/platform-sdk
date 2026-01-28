@@ -260,6 +260,13 @@ import { WorkerEntrypoint, exports } from 'cloudflare:workers';
 
 export class OutboundHandler extends WorkerEntrypoint {
   async fetch(request: Request) {
+    const url = new URL(request.url);
+    
+    // Block requests to internal services
+    if (url.hostname.endsWith('.internal')) {
+      return new Response('Forbidden', { status: 403 });
+    }
+    
     console.log(`Outbound: ${request.method} ${request.url}`);
     return fetch(request);
   }
@@ -267,9 +274,186 @@ export class OutboundHandler extends WorkerEntrypoint {
 
 const platform = Platform.create({
   loader: env.LOADER,
-  outbound: exports.OutboundHandler(),
+  outbound: exports.OutboundHandler,
 });
 ```
+
+## Tail Workers
+
+Attach tail workers for observability - receive logs, exceptions, and traces from tenant workers:
+
+```ts
+import { WorkerEntrypoint, exports } from 'cloudflare:workers';
+
+export class Logger extends WorkerEntrypoint {
+  async tail(events: TraceItem[]) {
+    for (const event of events) {
+      console.log({
+        worker: event.scriptName,
+        outcome: event.outcome,
+        logs: event.logs?.length ?? 0,
+        exceptions: event.exceptions?.length ?? 0,
+      });
+      
+      // Send to external logging service
+      if (event.exceptions?.length) {
+        await fetch('https://logging.example.com/errors', {
+          method: 'POST',
+          body: JSON.stringify(event.exceptions),
+        });
+      }
+    }
+  }
+}
+```
+
+Attach tail workers at different levels - they concatenate (all receive events):
+
+```ts
+// Global: all workers across all tenants
+const platform = Platform.create({
+  loader: env.LOADER,
+  defaults: {
+    tails: [exports.Logger],
+  },
+});
+
+// Tenant: all workers for this tenant
+await platform.createTenant({
+  id: 'acme',
+  tails: [exports.AcmeLogger],
+});
+
+// Worker: just this worker
+await platform.createWorker('acme', {
+  id: 'main',
+  files: { ... },
+  tails: [exports.WorkerSpecificLogger],
+});
+```
+
+Tail workers receive a `TraceItem[]` array with:
+
+- `scriptName` - the worker that generated the event
+- `outcome` - `'ok'`, `'exception'`, `'canceled'`, etc.
+- `eventTimestamp` - when the event occurred
+- `logs` - console.log/warn/error calls
+- `exceptions` - uncaught exceptions with name, message, stack
+
+## Templates
+
+Templates let you define reusable worker patterns with placeholders that tenants fill in when creating workers. This is useful for providing standardized implementations (webhook handlers, API endpoints, scheduled tasks) while allowing customization.
+
+### Defining a Template
+
+Templates use `{{slotName}}` syntax for placeholders:
+
+```ts
+await platform.registerTemplate({
+  id: 'webhook-handler',
+  name: 'Webhook Handler',
+  description: 'Process incoming webhooks with custom validation',
+  files: {
+    'src/index.ts': `
+      export default {
+        async fetch(request: Request, env: Env) {
+          const secret = env.WEBHOOK_SECRET;
+          const signature = request.headers.get('x-signature');
+          
+          // Custom validation logic
+          {{validation_logic}}
+          
+          const payload = await request.json();
+          
+          // Custom processing logic  
+          {{processing_logic}}
+          
+          return new Response('OK');
+        }
+      }
+    `,
+    'package.json': '{"main":"src/index.ts"}',
+  },
+  slots: [
+    {
+      name: 'validation_logic',
+      description: 'Code to validate the webhook signature',
+      default: 'if (!signature) return new Response("Unauthorized", { status: 401 });',
+    },
+    {
+      name: 'processing_logic', 
+      description: 'Code to process the webhook payload',
+      default: 'console.log("Received webhook:", payload);',
+    },
+  ],
+});
+```
+
+### Template CRUD
+
+```ts
+// List available templates
+const { templates } = await platform.listTemplates();
+
+// Get template details
+const template = await platform.getTemplate('webhook-handler');
+
+// Update template
+await platform.updateTemplate('webhook-handler', {
+  description: 'Updated description',
+  slots: [...],
+});
+
+// Delete template
+await platform.deleteTemplate('webhook-handler');
+```
+
+### Creating Workers from Templates
+
+Tenants create workers by providing values for each slot:
+
+```ts
+await platform.createWorkerFromTemplate('acme', {
+  templateId: 'webhook-handler',
+  workerId: 'github-webhook',
+  slots: {
+    validation_logic: `
+      const expected = await crypto.subtle.sign('HMAC', key, body);
+      if (signature !== expected) {
+        return new Response('Invalid signature', { status: 401 });
+      }
+    `,
+    processing_logic: `
+      if (payload.action === 'push') {
+        await env.QUEUE.send({ type: 'deploy', repo: payload.repository });
+      }
+    `,
+  },
+  // Optional: override env, limits, etc.
+  env: { WEBHOOK_SECRET: 'github-secret-123' },
+});
+```
+
+### Previewing Templates
+
+Preview what files will look like before creating the worker:
+
+```ts
+const preview = await platform.previewTemplateFiles('webhook-handler', {
+  validation_logic: 'if (!signature) throw new Error("missing");',
+  processing_logic: 'console.log(payload);',
+});
+
+// preview.files contains the interpolated source code
+console.log(preview.files['src/index.ts']);
+```
+
+### Slot Syntax
+
+- Slots use double curly braces: `{{slotName}}`
+- Slot names must be alphanumeric with underscores (e.g., `{{my_slot}}`)
+- Slots can appear anywhere in template files (code, config, etc.)
+- Every slot has a required `default` value used when tenants don't provide one
 
 ## Running the Playground
 

@@ -45,9 +45,13 @@ export {
   KVTenantStorage,
   KVWorkerStorage,
   KVHostnameStorage,
+  KVBundleStorage,
+  KVTemplateStorage,
   MemoryTenantStorage,
   MemoryWorkerStorage,
   MemoryHostnameStorage,
+  MemoryBundleStorage,
+  MemoryTemplateStorage,
 } from './storage/index.js';
 
 // Core primitives
@@ -73,6 +77,8 @@ export type {
   WorkerMetadata,
   WorkerRecord,
   WorkerStorage,
+  WorkerBundle,
+  BundleStorage,
   WorkerOptions,
   WorkerDefaults,
   WorkerLimits,
@@ -83,4 +89,11 @@ export type {
   HostnameStorage,
   HostnameRoute,
   PlatformEnv,
+  TemplateSlot,
+  TemplateConfig,
+  TemplateMetadata,
+  TemplateRecord,
+  TemplateSlotValues,
+  CreateFromTemplateOptions,
+  TemplateStorage,
 } from './types.js';

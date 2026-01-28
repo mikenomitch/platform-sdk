@@ -10,9 +10,13 @@ import {
   KVTenantStorage,
   KVWorkerStorage,
   KVHostnameStorage,
+  KVBundleStorage,
+  KVTemplateStorage,
   MemoryTenantStorage,
   MemoryWorkerStorage,
   MemoryHostnameStorage,
+  MemoryBundleStorage,
+  MemoryTemplateStorage,
 } from './storage/index.js';
 import type {
   Files,
@@ -32,6 +36,14 @@ import type {
   TailWorker,
   HostnameStorage,
   HostnameRoute,
+  BundleStorage,
+  WorkerBundle,
+  TemplateStorage,
+  TemplateConfig,
+  TemplateMetadata,
+  TemplateRecord,
+  TemplateSlotValues,
+  CreateFromTemplateOptions,
   PlatformEnv,
 } from './types.js';
 
@@ -44,12 +56,20 @@ export interface PlatformOptions {
   workerStorage?: WorkerStorage;
   /** Hostname storage (defaults to KV or memory) */
   hostnameStorage?: HostnameStorage;
+  /** Bundle storage for pre-built worker modules (defaults to KV or memory) */
+  bundleStorage?: BundleStorage;
+  /** Template storage (defaults to KV or memory) */
+  templateStorage?: TemplateStorage;
   /** KV namespace for tenant storage */
   tenantsKV?: KVNamespace;
-  /** KV namespace for worker storage */
+  /** KV namespace for worker storage (also used for bundles/templates if not provided) */
   workersKV?: KVNamespace;
   /** KV namespace for hostname routing */
   hostnamesKV?: KVNamespace;
+  /** KV namespace for bundle storage (defaults to workersKV) */
+  bundlesKV?: KVNamespace;
+  /** KV namespace for template storage (defaults to workersKV) */
+  templatesKV?: KVNamespace;
   /** 
    * Global defaults applied to all workers.
    * Inheritance: defaults → tenant config → worker config
@@ -96,6 +116,8 @@ export class Platform {
   public readonly tenants: TenantStorage;
   public readonly workers: WorkerStorage;
   public readonly hostnames: HostnameStorage;
+  public readonly bundles: BundleStorage;
+  public readonly templates: TemplateStorage;
   public readonly loader: WorkerLoader;
 
   private _defaults: WorkerDefaults;
@@ -130,6 +152,28 @@ export class Platform {
       this.hostnames = new KVHostnameStorage(options.hostnamesKV);
     } else {
       this.hostnames = new MemoryHostnameStorage();
+    }
+
+    // Initialize bundle storage (defaults to workersKV if not specified)
+    if (options.bundleStorage) {
+      this.bundles = options.bundleStorage;
+    } else if (options.bundlesKV) {
+      this.bundles = new KVBundleStorage(options.bundlesKV);
+    } else if (options.workersKV) {
+      this.bundles = new KVBundleStorage(options.workersKV);
+    } else {
+      this.bundles = new MemoryBundleStorage();
+    }
+
+    // Initialize template storage (defaults to workersKV if not specified)
+    if (options.templateStorage) {
+      this.templates = options.templateStorage;
+    } else if (options.templatesKV) {
+      this.templates = new KVTemplateStorage(options.templatesKV);
+    } else if (options.workersKV) {
+      this.templates = new KVTemplateStorage(options.workersKV);
+    } else {
+      this.templates = new MemoryTemplateStorage();
     }
 
     // Global defaults (fallback values)
@@ -267,6 +311,8 @@ export class Platform {
 
   /**
    * Create a new worker for a tenant
+   * 
+   * Builds the worker once and stores the bundle in KV for fast cold starts.
    */
   async createWorker(
     tenantId: string,
@@ -284,18 +330,29 @@ export class Platform {
       throw new Error(`Worker "${config.id}" already exists for tenant "${tenantId}"`);
     }
 
-    // Validate the worker compiles
-    await buildWorker(config.files, options?.build);
+    // Build the worker and validate it compiles
+    const buildResult = await buildWorker(config.files, options?.build);
 
     const now = new Date().toISOString();
+    const version = 1;
     const metadata: WorkerMetadata = {
       id: config.id,
       tenantId,
       createdAt: now,
       updatedAt: now,
-      version: 1,
+      version,
     };
 
+    // Store the pre-built bundle
+    const bundle: WorkerBundle = {
+      mainModule: buildResult.mainModule,
+      modules: buildResult.modules as Record<string, string>,
+      version,
+      builtAt: now,
+    };
+    await this.bundles.put(tenantId, config.id, version, bundle);
+
+    // Store worker config (without needing to rebuild on fetch)
     const fullConfig: WorkerConfig = { ...config, tenantId };
     await this.workers.put(tenantId, config.id, { metadata, config: fullConfig });
 
@@ -309,6 +366,8 @@ export class Platform {
 
   /**
    * Update an existing worker
+   * 
+   * Rebuilds the worker and stores the new bundle in KV.
    */
   async updateWorker(
     tenantId: string,
@@ -328,14 +387,25 @@ export class Platform {
       tenantId,
     };
 
-    // Validate the worker compiles
-    await buildWorker(config.files, options?.build);
+    // Build the worker and validate it compiles
+    const buildResult = await buildWorker(config.files, options?.build);
 
+    const now = new Date().toISOString();
+    const newVersion = existing.metadata.version + 1;
     const metadata: WorkerMetadata = {
       ...existing.metadata,
-      updatedAt: new Date().toISOString(),
-      version: existing.metadata.version + 1,
+      updatedAt: now,
+      version: newVersion,
     };
+
+    // Store the new pre-built bundle
+    const bundle: WorkerBundle = {
+      mainModule: buildResult.mainModule,
+      modules: buildResult.modules as Record<string, string>,
+      version: newVersion,
+      builtAt: now,
+    };
+    await this.bundles.put(tenantId, workerId, newVersion, bundle);
 
     await this.workers.put(tenantId, workerId, { metadata, config });
 
@@ -357,8 +427,11 @@ export class Platform {
    */
   async deleteWorker(tenantId: string, workerId: string): Promise<boolean> {
     this.stubCache.delete(`${tenantId}:${workerId}`);
-    // Delete associated hostnames
-    await this.hostnames.deleteByWorker(tenantId, workerId);
+    // Delete associated hostnames and bundles
+    await Promise.all([
+      this.hostnames.deleteByWorker(tenantId, workerId),
+      this.bundles.deleteAll(tenantId, workerId),
+    ]);
     return this.workers.delete(tenantId, workerId);
   }
 
@@ -367,6 +440,242 @@ export class Platform {
    */
   async listWorkers(tenantId: string, options?: { limit?: number; cursor?: string }) {
     return this.workers.list(tenantId, options);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Templates
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Register a template that tenants can use to create workers.
+   * 
+   * Templates define the worker structure with {{slot}} placeholders that
+   * tenants fill in with their custom code.
+   * 
+   * @example
+   * ```ts
+   * await platform.registerTemplate({
+   *   id: 'webhook-handler',
+   *   name: 'Webhook Handler',
+   *   description: 'Process incoming webhooks',
+   *   files: {
+   *     'src/index.ts': `
+   *       export default {
+   *         async fetch(request: Request, env: Env) {
+   *           const payload = await request.json();
+   *           {{handlePayload}}
+   *           return new Response('OK');
+   *         }
+   *       }
+   *     `,
+   *   },
+   *   slots: [
+   *     {
+   *       name: 'handlePayload',
+   *       description: 'Process the webhook payload',
+   *       example: 'console.log(payload);',
+   *       required: true,
+   *     },
+   *   ],
+   *   defaults: {
+   *     env: { WEBHOOK_SECRET: '' },
+   *   },
+   * });
+   * ```
+   */
+  async registerTemplate(config: TemplateConfig): Promise<TemplateMetadata> {
+    const existing = await this.templates.get(config.id);
+    if (existing) {
+      throw new Error(`Template "${config.id}" already exists`);
+    }
+
+    // Validate that all slots referenced in files are defined
+    const referencedSlots = this.extractSlotNames(config.files);
+    const definedSlots = new Set(config.slots.map((s) => s.name));
+    for (const slot of referencedSlots) {
+      if (!definedSlots.has(slot)) {
+        throw new Error(`Slot "{{${slot}}}" used in files but not defined in slots array`);
+      }
+    }
+
+    const now = new Date().toISOString();
+    const metadata: TemplateMetadata = {
+      id: config.id,
+      name: config.name,
+      description: config.description,
+      slotNames: config.slots.map((s) => s.name),
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await this.templates.put(config.id, { metadata, config });
+    return metadata;
+  }
+
+  /**
+   * Update an existing template
+   */
+  async updateTemplate(
+    templateId: string,
+    updates: Partial<Omit<TemplateConfig, 'id'>>
+  ): Promise<TemplateMetadata> {
+    const existing = await this.templates.get(templateId);
+    if (!existing) {
+      throw new Error(`Template "${templateId}" not found`);
+    }
+
+    const config: TemplateConfig = {
+      ...existing.config,
+      ...updates,
+      id: templateId,
+    };
+
+    // Validate slots if files or slots changed
+    if (updates.files || updates.slots) {
+      const referencedSlots = this.extractSlotNames(config.files);
+      const definedSlots = new Set(config.slots.map((s) => s.name));
+      for (const slot of referencedSlots) {
+        if (!definedSlots.has(slot)) {
+          throw new Error(`Slot "{{${slot}}}" used in files but not defined in slots array`);
+        }
+      }
+    }
+
+    const metadata: TemplateMetadata = {
+      ...existing.metadata,
+      name: config.name,
+      description: config.description,
+      slotNames: config.slots.map((s) => s.name),
+      updatedAt: new Date().toISOString(),
+    };
+
+    await this.templates.put(templateId, { metadata, config });
+    return metadata;
+  }
+
+  /**
+   * Get a template by ID
+   */
+  async getTemplate(templateId: string): Promise<TemplateRecord | null> {
+    return this.templates.get(templateId);
+  }
+
+  /**
+   * Delete a template
+   */
+  async deleteTemplate(templateId: string): Promise<boolean> {
+    return this.templates.delete(templateId);
+  }
+
+  /**
+   * List all templates
+   */
+  async listTemplates(options?: { limit?: number; cursor?: string }) {
+    return this.templates.list(options);
+  }
+
+  /**
+   * Create a worker from a template by filling in the slot values.
+   * 
+   * @example
+   * ```ts
+   * await platform.createWorkerFromTemplate('acme', 'webhook-handler', {
+   *   workerId: 'github-webhooks',
+   *   slots: {
+   *     handlePayload: `
+   *       if (payload.action === 'push') {
+   *         await env.QUEUE.send(payload);
+   *       }
+   *     `,
+   *   },
+   *   overrides: {
+   *     env: { WEBHOOK_SECRET: 'my-secret' },
+   *   },
+   * });
+   * ```
+   */
+  async createWorkerFromTemplate(
+    tenantId: string,
+    templateId: string,
+    options: CreateFromTemplateOptions
+  ): Promise<WorkerMetadata> {
+    const template = await this.templates.get(templateId);
+    if (!template) {
+      throw new Error(`Template "${templateId}" not found`);
+    }
+
+    // Interpolate slots into files
+    const files = this.interpolateTemplate(template.config, options.slots);
+
+    // Merge defaults: template defaults → overrides
+    const mergedConfig: Omit<WorkerConfig, 'id' | 'tenantId' | 'files'> = {
+      env: { ...template.config.defaults?.env, ...options.overrides?.env },
+      compatibilityDate: options.overrides?.compatibilityDate ?? template.config.defaults?.compatibilityDate,
+      compatibilityFlags: options.overrides?.compatibilityFlags ?? template.config.defaults?.compatibilityFlags,
+      limits: options.overrides?.limits ?? template.config.defaults?.limits,
+      tails: options.overrides?.tails ?? template.config.defaults?.tails,
+      hostnames: options.overrides?.hostnames,
+    };
+
+    // Create the worker
+    return this.createWorker(
+      tenantId,
+      {
+        id: options.workerId,
+        files,
+        ...mergedConfig,
+      },
+      { build: options.build }
+    );
+  }
+
+  /**
+   * Preview what files would be generated from a template without creating a worker.
+   * Useful for validation or showing tenants what their code will look like.
+   */
+  previewTemplateFiles(template: TemplateConfig, slots: TemplateSlotValues): Files {
+    return this.interpolateTemplate(template, slots);
+  }
+
+  /**
+   * Extract slot names from template files (finds all {{slotName}} patterns)
+   */
+  private extractSlotNames(files: Files): Set<string> {
+    const slotPattern = /\{\{(\w+)\}\}/g;
+    const slots = new Set<string>();
+    
+    for (const content of Object.values(files)) {
+      let match;
+      while ((match = slotPattern.exec(content)) !== null) {
+        slots.add(match[1]);
+      }
+    }
+    
+    return slots;
+  }
+
+  /**
+   * Interpolate slot values into template files
+   */
+  private interpolateTemplate(template: TemplateConfig, slotValues: TemplateSlotValues): Files {
+    const files: Files = {};
+    
+    // Build a map of slot name → value (with defaults)
+    const values: Record<string, string> = {};
+    for (const slot of template.slots) {
+      values[slot.name] = slotValues[slot.name] ?? slot.default;
+    }
+    
+    // Replace {{slotName}} in each file
+    for (const [path, content] of Object.entries(template.files)) {
+      let interpolated = content;
+      for (const [name, value] of Object.entries(values)) {
+        interpolated = interpolated.replace(new RegExp(`\\{\\{${name}\\}\\}`, 'g'), value);
+      }
+      files[path] = interpolated;
+    }
+    
+    return files;
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -502,8 +811,11 @@ export class Platform {
 
   /**
    * Get or create a worker stub, merging global → tenant → worker config
+   * 
+   * The loader callback only runs on cold starts - it fetches the pre-built
+   * bundle from KV instead of rebuilding the worker.
    */
-  async getStub(tenantId: string, workerId: string, options?: WorkerOptions): Promise<WorkerStub> {
+  async getStub(tenantId: string, workerId: string, _options?: WorkerOptions): Promise<WorkerStub> {
     const cacheKey = `${tenantId}:${workerId}`;
     
     const [tenant, worker] = await Promise.all([
@@ -526,24 +838,34 @@ export class Platform {
 
     // Merge: global defaults → tenant config → worker config
     const merged = this.mergeConfig(tenant, worker);
+    const version = worker.metadata.version;
 
-    // Build and load
-    const loaderName = `${tenantId}:${workerId}:v${worker.metadata.version}`;
+    // Load worker - the callback only runs on cold starts
+    // It fetches the pre-built bundle from KV (fast) instead of rebuilding (slow)
+    const loaderName = `${tenantId}:${workerId}:v${version}`;
+    const bundles = this.bundles; // Capture for closure
+    const outbound = this.outbound;
+
     const stub = this.loader.get(loaderName, async () => {
-      const result = await buildWorker(worker.config.files, options?.build);
+      // Fetch pre-built bundle from KV
+      const bundle = await bundles.get(tenantId, workerId, version);
+      if (!bundle) {
+        throw new Error(`Bundle not found for ${tenantId}/${workerId} v${version}`);
+      }
+
       return {
-        mainModule: result.mainModule,
-        modules: result.modules as Record<string, string>,
+        mainModule: bundle.mainModule,
+        modules: bundle.modules,
         compatibilityDate: merged.compatibilityDate,
         compatibilityFlags: merged.compatibilityFlags,
         env: merged.env,
         limits: merged.limits,
-        globalOutbound: this.outbound ?? null,
+        globalOutbound: outbound ?? null,
         tails: merged.tails,
       };
     });
 
-    this.stubCache.set(cacheKey, { version: worker.metadata.version, stub });
+    this.stubCache.set(cacheKey, { version, stub });
     return stub;
   }
 

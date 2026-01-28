@@ -105,6 +105,21 @@ export interface WorkerRecord {
 }
 
 /**
+ * Pre-built worker bundle stored in KV
+ * This is built once on upload and fetched on cold starts
+ */
+export interface WorkerBundle {
+  /** Main module entry point */
+  mainModule: string;
+  /** Compiled modules */
+  modules: Modules;
+  /** Version this bundle was built for */
+  version: number;
+  /** When the bundle was built */
+  builtAt: string;
+}
+
+/**
  * Options for building a worker
  */
 export interface BuildOptions {
@@ -146,6 +161,20 @@ export interface WorkerStorage {
   }>;
   /** Delete all workers for a tenant */
   deleteAll(tenantId: string): Promise<number>;
+}
+
+/**
+ * Storage interface for pre-built worker bundles
+ */
+export interface BundleStorage {
+  /** Get a bundle by versioned key */
+  get(tenantId: string, workerId: string, version: number): Promise<WorkerBundle | null>;
+  /** Store a bundle with versioned key */
+  put(tenantId: string, workerId: string, version: number, bundle: WorkerBundle): Promise<void>;
+  /** Delete a specific version */
+  delete(tenantId: string, workerId: string, version: number): Promise<boolean>;
+  /** Delete all bundles for a worker */
+  deleteAll(tenantId: string, workerId: string): Promise<number>;
 }
 
 /**
@@ -206,4 +235,138 @@ export interface PlatformEnv {
   LOADER: WorkerLoader;
   TENANTS?: KVNamespace;
   WORKERS?: KVNamespace;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Templates
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A slot where tenant code gets interpolated into template files.
+ * 
+ * Slots are defined with a placeholder syntax: {{slotName}}
+ * When creating a worker from a template, tenants provide values for each slot.
+ */
+export interface TemplateSlot {
+  /** Unique name for this slot (used as {{name}} in files) */
+  name: string;
+  /** Human-readable description of what code should go here */
+  description: string;
+  /** Default value used when tenant doesn't provide one */
+  default: string;
+  /** Example code to help tenants understand what to provide */
+  example?: string;
+}
+
+/**
+ * Template definition - pre-defined worker structure with slots for tenant code.
+ * 
+ * Templates let platform owners define the worker scaffolding while tenants
+ * only provide small pieces of business logic.
+ * 
+ * @example
+ * ```ts
+ * const template: TemplateConfig = {
+ *   id: 'webhook-handler',
+ *   name: 'Webhook Handler',
+ *   description: 'Process incoming webhooks with custom validation and handling',
+ *   files: {
+ *     'src/index.ts': `
+ *       import { validateSignature } from './utils';
+ *       
+ *       export default {
+ *         async fetch(request: Request, env: Env) {
+ *           if (!validateSignature(request, env.WEBHOOK_SECRET)) {
+ *             return new Response('Invalid signature', { status: 401 });
+ *           }
+ *           const payload = await request.json();
+ *           
+ *           // Tenant's custom handler
+ *           {{handleWebhook}}
+ *           
+ *           return new Response('OK');
+ *         }
+ *       }
+ *     `,
+ *     'src/utils.ts': '...',
+ *   },
+ *   slots: [
+ *     {
+ *       name: 'handleWebhook',
+ *       description: 'Process the webhook payload',
+ *       example: 'console.log("Received:", payload);',
+ *       required: true,
+ *     },
+ *   ],
+ *   defaults: {
+ *     env: { WEBHOOK_SECRET: '' },
+ *   },
+ * };
+ * ```
+ */
+export interface TemplateConfig {
+  /** Unique identifier for this template */
+  id: string;
+  /** Human-readable name */
+  name: string;
+  /** Description of what this template does */
+  description: string;
+  /** Template files with {{slot}} placeholders */
+  files: Files;
+  /** Slots that tenants fill in with their code */
+  slots: TemplateSlot[];
+  /** Default worker configuration (can be overridden by tenant/worker) */
+  defaults?: WorkerDefaults;
+}
+
+/**
+ * Metadata for a template
+ */
+export interface TemplateMetadata {
+  id: string;
+  name: string;
+  description: string;
+  slotNames: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Full template record
+ */
+export interface TemplateRecord {
+  metadata: TemplateMetadata;
+  config: TemplateConfig;
+}
+
+/**
+ * Values provided by tenant to fill template slots
+ */
+export type TemplateSlotValues = Record<string, string>;
+
+/**
+ * Options for creating a worker from a template
+ */
+export interface CreateFromTemplateOptions {
+  /** Worker ID */
+  workerId: string;
+  /** Values to fill in template slots */
+  slots: TemplateSlotValues;
+  /** Override template defaults */
+  overrides?: Partial<Omit<WorkerConfig, 'id' | 'tenantId' | 'files'>>;
+  /** Build options */
+  build?: BuildOptions;
+}
+
+/**
+ * Storage interface for templates
+ */
+export interface TemplateStorage {
+  get(templateId: string): Promise<TemplateRecord | null>;
+  put(templateId: string, record: TemplateRecord): Promise<void>;
+  delete(templateId: string): Promise<boolean>;
+  list(options?: { limit?: number; cursor?: string }): Promise<{
+    templates: TemplateMetadata[];
+    cursor?: string;
+  }>;
 }

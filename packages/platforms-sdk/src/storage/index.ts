@@ -14,6 +14,11 @@ import type {
   WorkerMetadata,
   HostnameStorage,
   HostnameRoute,
+  BundleStorage,
+  WorkerBundle,
+  TemplateStorage,
+  TemplateRecord,
+  TemplateMetadata,
 } from '../types.js';
 
 /**
@@ -322,4 +327,185 @@ export class MemoryHostnameStorage implements HostnameStorage {
   }
 }
 
-export type { TenantStorage, TenantRecord, TenantMetadata, WorkerStorage, WorkerRecord, WorkerMetadata, HostnameStorage, HostnameRoute };
+/**
+ * KV-based bundle storage for pre-built worker modules
+ */
+export class KVBundleStorage implements BundleStorage {
+  constructor(private kv: KVNamespace) {}
+
+  private key(tenantId: string, workerId: string, version: number): string {
+    return `bundle:${tenantId}:${workerId}:v${version}`;
+  }
+
+  async get(tenantId: string, workerId: string, version: number): Promise<WorkerBundle | null> {
+    const data = await this.kv.get(this.key(tenantId, workerId, version), 'json');
+    return data as WorkerBundle | null;
+  }
+
+  async put(tenantId: string, workerId: string, version: number, bundle: WorkerBundle): Promise<void> {
+    await this.kv.put(this.key(tenantId, workerId, version), JSON.stringify(bundle));
+  }
+
+  async delete(tenantId: string, workerId: string, version: number): Promise<boolean> {
+    const exists = await this.get(tenantId, workerId, version);
+    if (!exists) return false;
+    await this.kv.delete(this.key(tenantId, workerId, version));
+    return true;
+  }
+
+  async deleteAll(tenantId: string, workerId: string): Promise<number> {
+    const prefix = `bundle:${tenantId}:${workerId}:`;
+    let deleted = 0;
+    let cursor: string | undefined;
+
+    do {
+      const result = await this.kv.list({ prefix, cursor });
+      for (const key of result.keys) {
+        await this.kv.delete(key.name);
+        deleted++;
+      }
+      cursor = result.list_complete ? undefined : result.cursor;
+    } while (cursor);
+
+    return deleted;
+  }
+}
+
+/**
+ * In-memory bundle storage (for dev/testing)
+ */
+export class MemoryBundleStorage implements BundleStorage {
+  private store = new Map<string, WorkerBundle>();
+
+  private key(tenantId: string, workerId: string, version: number): string {
+    return `${tenantId}:${workerId}:v${version}`;
+  }
+
+  async get(tenantId: string, workerId: string, version: number): Promise<WorkerBundle | null> {
+    return this.store.get(this.key(tenantId, workerId, version)) ?? null;
+  }
+
+  async put(tenantId: string, workerId: string, version: number, bundle: WorkerBundle): Promise<void> {
+    this.store.set(this.key(tenantId, workerId, version), bundle);
+  }
+
+  async delete(tenantId: string, workerId: string, version: number): Promise<boolean> {
+    return this.store.delete(this.key(tenantId, workerId, version));
+  }
+
+  async deleteAll(tenantId: string, workerId: string): Promise<number> {
+    const prefix = `${tenantId}:${workerId}:`;
+    let deleted = 0;
+    for (const key of this.store.keys()) {
+      if (key.startsWith(prefix)) {
+        this.store.delete(key);
+        deleted++;
+      }
+    }
+    return deleted;
+  }
+
+  clear(): void {
+    this.store.clear();
+  }
+}
+
+/**
+ * KV-based template storage
+ */
+export class KVTemplateStorage implements TemplateStorage {
+  constructor(private kv: KVNamespace) {}
+
+  async get(templateId: string): Promise<TemplateRecord | null> {
+    const data = await this.kv.get(`template:${templateId}`, 'json');
+    return data as TemplateRecord | null;
+  }
+
+  async put(templateId: string, record: TemplateRecord): Promise<void> {
+    await this.kv.put(`template:${templateId}`, JSON.stringify(record), {
+      metadata: {
+        id: record.metadata.id,
+        name: record.metadata.name,
+        updatedAt: record.metadata.updatedAt,
+      },
+    });
+  }
+
+  async delete(templateId: string): Promise<boolean> {
+    const exists = await this.get(templateId);
+    if (!exists) return false;
+    await this.kv.delete(`template:${templateId}`);
+    return true;
+  }
+
+  async list(options?: { limit?: number; cursor?: string }): Promise<{
+    templates: TemplateMetadata[];
+    cursor?: string;
+  }> {
+    const result = await this.kv.list({
+      prefix: 'template:',
+      limit: options?.limit ?? 100,
+      cursor: options?.cursor,
+    });
+
+    const templates: TemplateMetadata[] = [];
+    for (const key of result.keys) {
+      const record = await this.get(key.name.replace('template:', ''));
+      if (record) {
+        templates.push(record.metadata);
+      }
+    }
+
+    return {
+      templates,
+      cursor: result.list_complete ? undefined : result.cursor,
+    };
+  }
+}
+
+/**
+ * In-memory template storage (for dev/testing)
+ */
+export class MemoryTemplateStorage implements TemplateStorage {
+  private store = new Map<string, TemplateRecord>();
+
+  async get(templateId: string): Promise<TemplateRecord | null> {
+    return this.store.get(templateId) ?? null;
+  }
+
+  async put(templateId: string, record: TemplateRecord): Promise<void> {
+    this.store.set(templateId, record);
+  }
+
+  async delete(templateId: string): Promise<boolean> {
+    return this.store.delete(templateId);
+  }
+
+  async list(options?: { limit?: number; cursor?: string }): Promise<{
+    templates: TemplateMetadata[];
+    cursor?: string;
+  }> {
+    const entries = Array.from(this.store.values()).map((record) => record.metadata);
+
+    const limit = options?.limit ?? 100;
+    const start = options?.cursor ? parseInt(options.cursor, 10) : 0;
+    const templates = entries.slice(start, start + limit);
+
+    return {
+      templates,
+      cursor: start + limit < entries.length ? String(start + limit) : undefined,
+    };
+  }
+
+  clear(): void {
+    this.store.clear();
+  }
+}
+
+export type { 
+  TenantStorage, TenantRecord, TenantMetadata, 
+  WorkerStorage, WorkerRecord, WorkerMetadata, 
+  HostnameStorage, HostnameRoute, 
+  BundleStorage, WorkerBundle,
+  TemplateStorage, TemplateRecord, TemplateMetadata,
+};
