@@ -12,6 +12,7 @@ const output = document.getElementById('output');
 const status = document.getElementById('status');
 const runBtn = document.getElementById('runBtn');
 const saveWorkerBtn = document.getElementById('saveWorkerBtn');
+const createWorkerBtn = document.getElementById('createWorkerBtn');
 const examples = document.getElementById('examples');
 const contextInfo = document.getElementById('contextInfo');
 
@@ -164,6 +165,14 @@ function setupEventListeners() {
 
   // Save worker button
   saveWorkerBtn.addEventListener('click', saveWorker);
+
+  // Create worker button (opens modal)
+  createWorkerBtn.addEventListener('click', () => {
+    if (!selectedTenant) return;
+    addWorkerModal.classList.remove('hidden');
+    document.getElementById('newWorkerId').value = '';
+    document.getElementById('newWorkerId').focus();
+  });
 
   // Add file modal
   document.getElementById('addFile').addEventListener('click', () => {
@@ -369,6 +378,7 @@ async function deleteWorker(tenantId, workerId) {
     if (selectedWorker === workerId) {
       selectedWorker = null;
       saveWorkerBtn.style.display = 'none';
+      createWorkerBtn.style.display = 'inline-flex';
       updateContext();
     }
     await loadWorkers(tenantId);
@@ -505,6 +515,7 @@ function selectTenant(tenantId) {
   selectedTenantBadge.textContent = tenantId;
   workersSection.style.display = 'block';
   saveWorkerBtn.style.display = 'none';
+  createWorkerBtn.style.display = 'inline-flex';
   
   // Re-render tenants to update selection
   const items = tenantList.querySelectorAll('.list-item');
@@ -519,6 +530,7 @@ function selectTenant(tenantId) {
 function selectWorker(workerId) {
   selectedWorker = workerId;
   saveWorkerBtn.style.display = 'inline-flex';
+  createWorkerBtn.style.display = 'none';
   
   const items = workerList.querySelectorAll('.list-item');
   items.forEach(item => {
@@ -558,7 +570,8 @@ function updateContext() {
 function loadExample(name) {
   files = { ...EXAMPLES[name] };
   selectedWorker = null;
-  saveWorkerBtn.style.display = selectedTenant ? 'none' : 'none';
+  saveWorkerBtn.style.display = 'none';
+  createWorkerBtn.style.display = selectedTenant ? 'inline-flex' : 'none';
   renderTabs();
   selectFile(Object.keys(files)[0]);
   updateContext();
